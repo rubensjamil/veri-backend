@@ -1,0 +1,10 @@
+node_modules  
+*.zip  
+*.log  
+*.py  
+*.json.json  
+*.txt  
+dados-abertos-zip  
+logs  
+app  
+.env 

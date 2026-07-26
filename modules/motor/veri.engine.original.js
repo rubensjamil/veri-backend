@@ -1,0 +1,426 @@
+// ============================================
+// veri.engine.js - Motor VERI (único e soberano)
+// 10 fatores de risco - PESOS E METODOLOGIA
+// CORRIGIDO: "RISCO RELACIONAL" → "RISCO ENTRE AS PARTES"
+// ============================================
+
+const config = require('../../motor.config.js');
+const metodologia = require('../../motor.metodologia.js');
+
+// ============================================
+// MAPEAMENTO DE PORTAS (INTERNO)
+// ============================================
+const DESCRICAO_PORTAS = {
+    'empresa_fornecedor': 'Fornecedor',
+    'empresa_loja': 'Loja',
+    'empresa_cliente_pj': 'Cliente PJ',
+    'pessoa_contratar': 'Contratação',
+    'pessoa_sociedade': 'Sociedade',
+    'pessoa_comprador_pf': 'Comprador PF',
+    'pessoa_vendedor_pf': 'Vendedor PF',
+    'contrato_unico': 'Contrato',
+    'financas_unico': 'Finanças',
+    'link_unico': 'Link de Oferta',
+    'leads_unico': 'Leads',
+    'lotes_unico': 'Lotes'
+};
+
+// ============================================
+// FUNÇÕES DE CÁLCULO POR FATOR
+// ============================================
+
+function calcularFinanceiro(dados) {
+    const { analisado, solicitante, negocio, relacionamento, analise_para } = dados;
+    const isPF = analise_para === 'pf_comprador';
+    const valorNegocio = negocio.valor || 0;
+    const parcelas = negocio.parcelas || 1;
+    const valorParcela = valorNegocio / parcelas;
+
+    const negocioStr = dados.negocio || '';
+    const isCompra = negocioStr.startsWith('comprar') || negocioStr.startsWith('contratar');
+    const isVenda = negocioStr.startsWith('vender');
+
+    let ticketUsado = 0;
+    let fonte = '';
+
+    if (isCompra) {
+        if (solicitante.tipo === 'pessoa' && solicitante.renda && solicitante.renda > 0) {
+            ticketUsado = solicitante.renda / 30;
+            fonte = 'renda_solicitante';
+        } else if (solicitante.tipo === 'empresa') {
+            ticketUsado = calcularTicketDiario(solicitante.porte || 'MEDIO');
+            fonte = 'porte_solicitante';
+        } else {
+            ticketUsado = relacionamento.ticket_medio || 1000;
+            fonte = 'ticket_medio_fallback';
+        }
+    } else if (isVenda) {
+        if (analisado.tipo === 'pessoa' && analisado.renda && analisado.renda > 0) {
+            ticketUsado = analisado.renda / 30;
+            fonte = 'renda_analisado';
+        } else if (analisado.tipo === 'empresa') {
+            ticketUsado = calcularTicketDiario(analisado.porte || 'MEDIO');
+            fonte = 'porte_analisado';
+        } else {
+            ticketUsado = relacionamento.ticket_medio || 1000;
+            fonte = 'ticket_medio_fallback';
+        }
+    } else {
+        ticketUsado = calcularTicketDiario(analisado.porte || 'MEDIO');
+        fonte = 'porte_analisado_fallback';
+    }
+
+    if (ticketUsado === 0) {
+        ticketUsado = 1000;
+        fonte = 'valor_padrao';
+    }
+
+    let proporcaoRaw = 0;
+    if (ticketUsado > 0 && valorParcela > 0) {
+        proporcaoRaw = valorParcela / ticketUsado;
+    }
+
+    let financeiro = config.DEFAULTS.FINANCEIRO;
+    if (proporcaoRaw > 0) {
+        const isPFParte = (isCompra && solicitante.tipo === 'pessoa') || (isVenda && analisado.tipo === 'pessoa');
+
+        if (isPFParte) {
+            const comprometimentoPercent = proporcaoRaw * 100;
+            const regras = metodologia.REGRAS.FINANCEIRO.PF;
+            if (comprometimentoPercent >= regras.LIMITES[0]) financeiro = regras.VALORES[0];
+            else if (comprometimentoPercent >= regras.LIMITES[1]) financeiro = regras.VALORES[1];
+            else if (comprometimentoPercent >= regras.LIMITES[2]) financeiro = regras.VALORES[2];
+            else if (comprometimentoPercent >= regras.LIMITES[3]) financeiro = regras.VALORES[3];
+            else financeiro = regras.VALORES[4];
+        } else {
+            const regras = metodologia.REGRAS.FINANCEIRO.PJ;
+            if (proporcaoRaw < regras.LIMITES[0]) financeiro = regras.VALORES[0];
+            else if (proporcaoRaw < regras.LIMITES[1]) financeiro = regras.VALORES[1];
+            else if (proporcaoRaw < regras.LIMITES[2]) financeiro = regras.VALORES[2];
+            else if (proporcaoRaw < regras.LIMITES[3]) financeiro = regras.VALORES[3];
+            else if (proporcaoRaw < regras.LIMITES[4]) financeiro = regras.VALORES[4];
+            else financeiro = regras.VALORES[5];
+        }
+    }
+
+    if (negocio.tipo_pagamento === 'aprazo') {
+        financeiro = Math.min(100, financeiro * 1.2);
+    }
+
+    return { 
+        pontuacao: Math.round(financeiro), 
+        ticket_estimado: ticketUsado, 
+        fonte: fonte 
+    };
+}
+
+function calcularDescontinuidade(dados) {
+    const { analisado } = dados;
+    const tempoMercado = calcularTempoMercado(analisado.data_abertura);
+    const regras = metodologia.REGRAS.DESCONTINUIDADE;
+    let descontinuidade = config.DEFAULTS.DESCONTINUIDADE;
+
+    if (tempoMercado < regras.LIMITES[0]) descontinuidade = regras.VALORES[0];
+    else if (tempoMercado < regras.LIMITES[1]) descontinuidade = regras.VALORES[1];
+    else if (tempoMercado < regras.LIMITES[2]) descontinuidade = regras.VALORES[2];
+    else if (tempoMercado < regras.LIMITES[3]) descontinuidade = regras.VALORES[3];
+    else if (tempoMercado < regras.LIMITES[4]) descontinuidade = regras.VALORES[4];
+    else descontinuidade = regras.VALORES[5];
+
+    return { pontuacao: descontinuidade, tempo_mercado_anos: tempoMercado };
+}
+
+function calcularVeracidade(dados) {
+    const { analisado } = dados;
+    const situacao = (analisado.situacao || 'ATIVA').toUpperCase();
+    const regras = metodologia.REGRAS.VERACIDADE;
+    let veracidade = config.DEFAULTS.VERACIDADE;
+
+    if (situacao === 'BAIXADA') veracidade = regras.BAIXADA;
+    else if (situacao === 'SUSPENSA' || situacao === 'INAPTA') veracidade = regras.SUSPENSA;
+
+    return { pontuacao: veracidade, situacao: situacao };
+}
+
+function calcularComportamental(dados) {
+    const { relacionamento } = dados;
+    const conhecimento = relacionamento.conhecimento || 'razoavel';
+    const experiencia = relacionamento.experiencia || 'neutra';
+    const meses = relacionamento.meses || 0;
+
+    const regrasConhecimento = metodologia.REGRAS.COMPORTAMENTAL.CONHECIMENTO;
+    const regrasExperiencia = metodologia.REGRAS.COMPORTAMENTAL.EXPERIENCIA;
+    const regrasTempo = metodologia.REGRAS.COMPORTAMENTAL.TEMPO_RELACAO;
+
+    let fC = regrasConhecimento[conhecimento.toUpperCase()] || 1.0;
+    let fE = regrasExperiencia[experiencia.toUpperCase()] || 1.0;
+
+    let fM = 1.0;
+    if (meses >= regrasTempo.LIMITES[0]) fM = regrasTempo.VALORES[0];
+    else if (meses >= regrasTempo.LIMITES[1]) fM = regrasTempo.VALORES[1];
+    else if (meses >= regrasTempo.LIMITES[2]) fM = regrasTempo.VALORES[2];
+    else if (meses >= regrasTempo.LIMITES[3]) fM = regrasTempo.VALORES[3];
+    else fM = regrasTempo.VALORES[4];
+
+    let comportamental = Math.min(100, config.DEFAULTS.COMPORTAMENTAL * Math.max(0.2, Math.min(2.0, fM * fE * fC)));
+
+    return { pontuacao: comportamental };
+}
+
+function calcularIntegridade(dados) {
+    const { analisado } = dados;
+    const porteAnalisado = analisado.porte || '';
+    const regras = metodologia.REGRAS.INTEGRIDADE;
+    let integridade = config.DEFAULTS.INTEGRIDADE;
+
+    if (porteAnalisado === 'GRANDE' || porteAnalisado === 'DEMAIS') {
+        integridade = regras.GRANDE;
+    }
+    if (!porteAnalisado) {
+        integridade = regras.DEFAULT;
+    }
+
+    return { pontuacao: integridade };
+}
+
+function calcularDeterioracao(dados) {
+    const { analisado } = dados;
+    const situacao = (analisado.situacao || 'ATIVA').toUpperCase();
+    let deterioracao = 0;
+
+    if (situacao === 'BAIXADA') deterioracao = 90;
+    else if (situacao === 'SUSPENSA' || situacao === 'INAPTA') deterioracao = 50;
+
+    return { pontuacao: deterioracao };
+}
+
+function calcularRelacional(dados) {
+    const { analisado, solicitante } = dados;
+    const porteAnalisado = analisado.porte || '';
+    const porteSolicitante = solicitante.porte || config.DEFAULTS.PORTE_SOLICITANTE;
+
+    if (analisado.tipo === 'pessoa') {
+        const ordem = config.ORDEM_PORTE;
+        const sol = ordem[porteSolicitante] || 3;
+        const anal = 0;
+        const diferencaPorte = Math.abs(sol - anal);
+        const regras = metodologia.REGRAS.RELACIONAL.DIFERENCA;
+        let relacional = regras[diferencaPorte] || 80;
+        return { pontuacao: relacional, porte_solicitante: porteSolicitante, porte_analisado: 'PESSOA_FISICA' };
+    }
+
+    const ordem = config.ORDEM_PORTE;
+    const sol = ordem[porteSolicitante] || 3;
+    const anal = ordem[porteAnalisado] || 3;
+    const diferencaPorte = Math.abs(sol - anal);
+
+    const regras = metodologia.REGRAS.RELACIONAL.DIFERENCA;
+    let relacional = regras[diferencaPorte] || 80;
+
+    return { pontuacao: relacional, porte_solicitante: porteSolicitante, porte_analisado: porteAnalisado };
+}
+
+// ============================================
+// FUNÇÕES AUXILIARES
+// ============================================
+
+function calcularTicketDiario(porte) {
+    const anual = config.FATURAMENTO_ANUAL[porte] || 0;
+    return anual ? Math.round(anual / 12 / 30) : 0;
+}
+
+function calcularTempoMercado(dataAbertura) {
+    if (!dataAbertura) return 0;
+    return (new Date() - new Date(dataAbertura)) / (1000 * 60 * 60 * 24 * 365);
+}
+
+function getNivelRisco(contrib) {
+    const niveis = config.NIVEIS_RISCO;
+    if (contrib >= niveis.CRITICO) return 'CRITICO';
+    if (contrib >= niveis.ALTO) return 'ALTO';
+    if (contrib >= niveis.MEDIO) return 'MEDIO';
+    return 'BAIXO';
+}
+
+// ============================================
+// FUNÇÃO PRINCIPAL: calcularRiscos
+// ============================================
+
+function calcularRiscos(dados) {
+    const situacaoRaw = (dados.analisado && dados.analisado.situacao) ? dados.analisado.situacao.toUpperCase() : 'ATIVA';
+    
+    const palavrasCriticas = [
+        'BAIXADA', 'INATIVA', 'CANCELADA', 'SUSPENSA', 'NULA',
+        'LIQUIDAÇÃO', 'LIQUIDACAO', 'RECUPERAÇÃO', 'RECUPERACAO',
+        'FALÊNCIA', 'FALENCIA', 'INTERVENÇÃO', 'INTERVENCAO',
+        'INAPTA', 'INAPTIDÃO'
+    ];
+
+    const isCritica = palavrasCriticas.some(function(palavra) {
+        return situacaoRaw.indexOf(palavra) !== -1;
+    });
+
+    if (isCritica) {
+        const scoreGlobal = 95;
+        const recuperabilidade = 5;
+        const recomendacao = 'PARE';
+
+        const riscoCritico = {
+            risco: 'SITUAÇÃO CRÍTICA',
+            pontuacao: 100,
+            contribuicao: 30,
+            nivel: 'CRITICO'
+        };
+
+        const riscos = [
+            riscoCritico,
+            { risco: 'FINANCEIRO', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
+            { risco: 'RESOLUTIVIDADE', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
+            { risco: 'DESCONTINUIDADE', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
+            { risco: 'VERACIDADE', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
+            { risco: 'COMPORTAMENTAL', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
+            { risco: 'INTEGRIDADE', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
+            { risco: 'DETERIORACAO', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
+            { risco: 'CONTRATUAL', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
+            { risco: 'REPUTACIONAL', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
+            { risco: 'RISCO ENTRE AS PARTES', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' }
+        ];
+
+        const topRiscos = [riscoCritico];
+
+        const porta = dados.porta_entrada || 'empresa';
+        const sub = dados.subsecao || 'unico';
+        const chaveTipo = porta + '_' + sub;
+        const tipoAnalise = DESCRICAO_PORTAS[chaveTipo] || 'Geral';
+
+        return {
+            score_global: scoreGlobal,
+            recuperabilidade: recuperabilidade,
+            recomendacao: recomendacao,
+            risco_principal: 'SITUAÇÃO CRÍTICA',
+            riscos: riscos,
+            top_riscos: topRiscos,
+            tipo_analise: tipoAnalise,
+            ticket_estimado: 0,
+            tempo_mercado_anos: 0,
+            porte_solicitante: (dados.solicitante && dados.solicitante.porte) || 'MEDIO',
+            porte_analisado: (dados.analisado && dados.analisado.porte) || '',
+            metodologia: config.METODOLOGIA_VERSAO,
+            percentual_comprometimento: 0,
+            alerta: {
+                tipo: 'SITUACAO_CRITICA',
+                mensagem: 'A empresa está com situação "' + situacaoRaw + '". Negócios com essa situação são considerados inviáveis.',
+                acao_recomendada: 'Não prossiga com este negócio.'
+            }
+        };
+    }
+
+    const financeiroResult = calcularFinanceiro(dados);
+    const descontinuidadeResult = calcularDescontinuidade(dados);
+    const veracidadeResult = calcularVeracidade(dados);
+    const comportamentalResult = calcularComportamental(dados);
+    const integridadeResult = calcularIntegridade(dados);
+    const deterioracaoResult = calcularDeterioracao(dados);
+    const relacionalResult = calcularRelacional(dados);
+
+    // ============================================================
+    // PERCENTUAL DE COMPROMETIMENTO (backend)
+    // ============================================================
+    var percentualComprometimento = null;
+    var valorNegocio = dados.negocio.valor || 0;
+    var parcelas = dados.negocio.parcelas || 1;
+    if (financeiroResult.ticket_estimado > 0 && valorNegocio > 0) {
+        var valorParcela = (parcelas > 0) ? valorNegocio / parcelas : valorNegocio;
+        percentualComprometimento = Math.round((valorParcela / financeiroResult.ticket_estimado) * 100);
+    }
+
+    const resolutividade = config.DEFAULTS.RESOLUTIVIDADE;
+    const contratual = 0;
+    const reputacional = config.DEFAULTS.REPUTACIONAL;
+
+    const fatores = [
+        { nome: 'FINANCEIRO', pontuacao: financeiroResult.pontuacao, peso: metodologia.PESOS.FINANCEIRO },
+        { nome: 'RESOLUTIVIDADE', pontuacao: resolutividade, peso: metodologia.PESOS.RESOLUTIVIDADE },
+        { nome: 'DESCONTINUIDADE', pontuacao: descontinuidadeResult.pontuacao, peso: metodologia.PESOS.DESCONTINUIDADE },
+        { nome: 'VERACIDADE', pontuacao: veracidadeResult.pontuacao, peso: metodologia.PESOS.VERACIDADE },
+        { nome: 'COMPORTAMENTAL', pontuacao: comportamentalResult.pontuacao, peso: metodologia.PESOS.COMPORTAMENTAL },
+        { nome: 'INTEGRIDADE', pontuacao: integridadeResult.pontuacao, peso: metodologia.PESOS.INTEGRIDADE },
+        { nome: 'DETERIORACAO', pontuacao: deterioracaoResult.pontuacao, peso: metodologia.PESOS.DETERIORACAO },
+        { nome: 'CONTRATUAL', pontuacao: contratual, peso: metodologia.PESOS.CONTRATUAL },
+        { nome: 'REPUTACIONAL', pontuacao: reputacional, peso: metodologia.PESOS.REPUTACIONAL },
+        { nome: 'RISCO ENTRE AS PARTES', pontuacao: relacionalResult.pontuacao, peso: metodologia.PESOS.RELACIONAL }
+    ];
+
+    const totalPonderado = fatores.reduce((acc, f) => acc + (f.pontuacao * f.peso), 0);
+    const scoreGlobal = Math.min(99, Math.max(1, Math.round(totalPonderado / 6.0 * 10) / 10));
+    const recuperabilidade = 100 - scoreGlobal;
+
+    const fatorDivisor = totalPonderado > 0 ? totalPonderado : 1;
+    const riscos = fatores.map(f => {
+        const contribuicao = Math.round((f.pontuacao * f.peso / fatorDivisor) * scoreGlobal * 10) / 10;
+        return {
+            risco: f.nome,
+            pontuacao: f.pontuacao,
+            contribuicao: contribuicao,
+            nivel: getNivelRisco(contribuicao)
+        };
+    });
+
+    let recomendacao = 'SIGA';
+    if (scoreGlobal > 65) {
+        recomendacao = 'PARE';
+    } else if (scoreGlobal >= 35 && scoreGlobal <= 65) {
+        recomendacao = 'ATENCAO';
+    }
+
+    riscos.sort((a, b) => b.contribuicao - a.contribuicao);
+    let topRiscos = riscos.slice(0, 3);
+    const temFinanceiro = topRiscos.some(r => r.risco === 'FINANCEIRO');
+    if (!temFinanceiro) {
+        const financeiroObj = riscos.find(r => r.risco === 'FINANCEIRO');
+        if (financeiroObj) topRiscos.push(financeiroObj);
+    }
+    if (topRiscos.length < 4) {
+        for (let i = 0; i < riscos.length && topRiscos.length < 4; i++) {
+            if (!topRiscos.some(r => r.risco === riscos[i].risco)) {
+                topRiscos.push(riscos[i]);
+            }
+        }
+    }
+    topRiscos = topRiscos.slice(0, 4);
+
+    const porta = dados.porta_entrada || 'empresa';
+    const sub = dados.subsecao || 'unico';
+    const chaveTipo = porta + '_' + sub;
+    const tipoAnalise = DESCRICAO_PORTAS[chaveTipo] || 'Geral';
+
+    return {
+        score_global: scoreGlobal,
+        recuperabilidade: recuperabilidade,
+        recomendacao: recomendacao,
+        risco_principal: topRiscos[0]?.risco || 'FINANCEIRO',
+        riscos: riscos,
+        top_riscos: topRiscos,
+        tipo_analise: tipoAnalise,
+        ticket_estimado: financeiroResult.ticket_estimado || 0,
+        tempo_mercado_anos: Math.round(descontinuidadeResult.tempo_mercado_anos * 10) / 10 || 0,
+        porte_solicitante: relacionalResult.porte_solicitante || 'MEDIO',
+        porte_analisado: relacionalResult.porte_analisado || '',
+        metodologia: config.METODOLOGIA_VERSAO,
+        percentual_comprometimento: percentualComprometimento
+    };
+}
+
+module.exports = {
+    calcularRiscos,
+    calcularFinanceiro,
+    calcularDescontinuidade,
+    calcularVeracidade,
+    calcularComportamental,
+    calcularIntegridade,
+    calcularDeterioracao,
+    calcularRelacional,
+    calcularTicketDiario,
+    calcularTempoMercado,
+    getNivelRisco
+};

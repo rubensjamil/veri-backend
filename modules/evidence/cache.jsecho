@@ -1,0 +1,1 @@
+// Cache simples em mem¢ria - SEM FIREBASE  let cacheMemoria = {};  module.exports = {      getCache: async function(key) { return cacheMemoria[key] 
