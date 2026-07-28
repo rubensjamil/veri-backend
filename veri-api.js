@@ -14,17 +14,22 @@
 // CORRIGIDO: Substituído optional chaining (?.) por compatibilidade
 // CORRIGIDO: Erro "negocioStr.startsWith is not a function"
 // CORRIGIDO: Garantia que req.body.negocio seja string
+// CORRIGIDO: Suporte a CNPJs alfanuméricos
+// CORRIGIDO: Busca por nome no banco local e no CSV
+// CORRIGIDO: Lógica de busca com 3 fontes (BrasilAPI -> ReceitaWS -> CSV)
+// CORRIGIDO: Indexação em memória do CSV para busca instantânea
+// CORRIGIDO: Extração de sócio majoritário e controladora
 // ============================================
 
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
+const fs = require("fs");
 const { Storage } = require("@google-cloud/storage");
 const csv = require("csv-parser");
 const crypto = require("crypto");
 
 require('dotenv').config();
-// require('./startup_log');
 
 // ============================================
 // VERSÕES
@@ -40,7 +45,6 @@ const VERSAO_MOTOR = "3.2.1";
 // ============================================
 const { coletarEvidenciasReais } = require("./modules/evidence/orchestrator");
 const { estruturar } = require("./modules/evidence/gemini.client");
-const { validarEvidencias } = require("./modules/evidence/validator");
 const { getCache, setCache } = require("./modules/evidence/cache");
 const { extrairScores } = require("./modules/motor/scores");
 const { calcularRiscos } = require("./modules/motor/veri.engine");
@@ -92,8 +96,134 @@ const CONTADORES_FILE = "analises/contadores.json";
 const TENDENCIAS_FILE = "analises/tendencias.json";
 const storage = new Storage();
 
-function normalizarCNPJ(cnpj) {
-    return (cnpj || "").replace(/\D/g, "");
+// ============================================
+// ÍNDICE EM MEMÓRIA PARA O CSV
+// ============================================
+let csvIndexCNPJ = null;      // Map para busca por CNPJ
+let csvIndexNome = null;      // Map para busca por Nome
+let csvIndexCarregado = false;
+const CSV_PATH = path.join(__dirname, 'dados-abertos-zip', 'cnpj_busca_6_colunas.csv');
+
+// ============================================================
+// NORMALIZAR CNPJ/CPF - SUPORTE A ALFANUMÉRICOS
+// ============================================================
+function normalizarCNPJ(doc) {
+    if (!doc) return '';
+    // Remove apenas caracteres especiais, mantém letras e números
+    return doc.replace(/[.\-\/]/g, '').toUpperCase();
+}
+
+function isCNPJ(valor) {
+    const limpo = normalizarCNPJ(valor);
+    return limpo.length === 14;
+}
+
+function isCPF(valor) {
+    const limpo = normalizarCNPJ(valor);
+    return /^\d{11}$/.test(limpo);
+}
+
+// ============================================
+// BANCO LOCAL DE CNPJs FAMOSOS
+// ============================================
+let CNPJS_FAMOSOS = {};
+try {
+    const cnpjsPath = path.join(__dirname, 'modules', 'evidence', 'cnpjs_famosos.json');
+    CNPJS_FAMOSOS = JSON.parse(fs.readFileSync(cnpjsPath, 'utf8'));
+    console.log('📦 CNPJS_FAMOSOS carregado. UFs: ' + Object.keys(CNPJS_FAMOSOS).length);
+} catch (e) {
+    console.warn('⚠️ cnpjs_famosos.json não encontrado ou inválido. Banco local desativado.');
+}
+
+function encontrarCNPJPorNome(nome, uf) {
+    if (!nome || typeof nome !== 'string') return null;
+    if (Object.keys(CNPJS_FAMOSOS).length === 0) return null;
+    const nomeBusca = nome.toLowerCase().trim();
+    const estados = uf ? [uf] : Object.keys(CNPJS_FAMOSOS);
+    for (var i = 0; i < estados.length; i++) {
+        var ufKey = estados[i];
+        var empresas = CNPJS_FAMOSOS[ufKey] || [];
+        for (var j = 0; j < empresas.length; j++) {
+            var empresa = empresas[j];
+            if (empresa.cnpj === 'PESQUISAR') continue;
+            var nomeEmpresa = empresa.nome.toLowerCase().trim();
+            if (nomeEmpresa.indexOf(nomeBusca) !== -1 || nomeBusca.indexOf(nomeEmpresa) !== -1) {
+                console.log('✅ Encontrado no banco local: ' + empresa.nome + ' CNPJ: ' + empresa.cnpj + ' UF: ' + ufKey);
+                return {
+                    cnpj: empresa.cnpj,
+                    faturamento_anual: empresa.faturamento_anual,
+                    setor: empresa.setor,
+                    uf: ufKey,
+                    nome_encontrado: empresa.nome,
+                    porte: empresa.porte || 'MEDIO',
+                    fonte: 'banco_local'
+                };
+            }
+        }
+    }
+    return null;
+}
+
+// ============================================
+// CARREGA O CSV EM MEMÓRIA (UMA ÚNICA VEZ)
+// ============================================
+async function carregarCSVIndex() {
+    if (csvIndexCarregado) return;
+    
+    console.log('📊 Carregando índice do CSV em memória...');
+    const inicio = Date.now();
+    
+    csvIndexCNPJ = new Map();
+    csvIndexNome = new Map();
+    
+    return new Promise(function(resolve, reject) {
+        let linhas = 0;
+        fs.createReadStream(CSV_PATH)
+            .pipe(csv())
+            .on("data", function(row) {
+                linhas++;
+                const cnpj = row.CNPJ ? row.CNPJ.replace(/\D/g, '') : '';
+                const razao = (row["RAZAO SOCIAL"] || row.razao_social || "").toLowerCase().trim();
+                const fantasia = (row["NOME FANTASIA"] || row.nome_fantasia || "").toLowerCase().trim();
+                
+                if (cnpj) {
+                    csvIndexCNPJ.set(cnpj, {
+                        cnpj: row.CNPJ,
+                        razao_social: row["RAZAO SOCIAL"] || row.razao_social || "",
+                        nome_fantasia: row["NOME FANTASIA"] || row.nome_fantasia || "",
+                        porte: row.PORTE || row.porte || "",
+                        data_abertura: row["DATA DE ABERTURA"] || row.data_abertura || "",
+                        situacao: row["SITUACAO"] || row.situacao || "ATIVA",
+                        uf: row.UF || "",
+                        municipio: row.MUNICIPIO || ""
+                    });
+                }
+                
+                // Indexa por nome (razao social e nome fantasia)
+                if (razao) {
+                    if (!csvIndexNome.has(razao)) {
+                        csvIndexNome.set(razao, []);
+                    }
+                    csvIndexNome.get(razao).push(cnpj);
+                }
+                if (fantasia && fantasia !== razao) {
+                    if (!csvIndexNome.has(fantasia)) {
+                        csvIndexNome.set(fantasia, []);
+                    }
+                    csvIndexNome.get(fantasia).push(cnpj);
+                }
+            })
+            .on("end", function() {
+                csvIndexCarregado = true;
+                const tempo = Date.now() - inicio;
+                console.log(✅ CSV indexado em memória: ${linhas} empresas em ${tempo}ms);
+                resolve();
+            })
+            .on("error", function(err) {
+                console.error('❌ Erro ao carregar CSV:', err);
+                reject(err);
+            });
+    });
 }
 
 // ============================================
@@ -324,7 +454,7 @@ async function fetchComoNavegador(url, timeoutMs) {
 }
 
 // ============================================
-// BUSCAS CNPJ (DELAY AGORA NO ORQUESTRADOR)
+// BUSCA CNPJ NA BRASILAPI COM SÓCIOS
 // ============================================
 async function buscarCNPJnaBrasilAPI(cnpj) {
     try {
@@ -333,6 +463,48 @@ async function buscarCNPJnaBrasilAPI(cnpj) {
         if (!response.ok) return null;
         const data = await response.json();
         if (data && !data.error) {
+            // ============================================================
+            // EXTRAI SÓCIO MAJORITÁRIO E CONTROLADORA
+            // ============================================================
+            let socioMajoritario = null;
+            let controladora = null;
+            
+            if (data.qsa && data.qsa.length > 0) {
+                // Ordena por percentual (maior primeiro)
+                const sociosOrdenados = data.qsa.slice().sort(function(a, b) {
+                    return (b.percentual_capital_social || 0) - (a.percentual_capital_social || 0);
+                });
+                
+                const socioPrincipal = sociosOrdenados[0];
+                if (socioPrincipal) {
+                    const cpfCnpj = socioPrincipal.cpf_cnpj_socio || '';
+                    const nome = socioPrincipal.nome_socio || '';
+                    const percentual = socioPrincipal.percentual_capital_social || 0;
+                    const qualificacao = socioPrincipal.qualificacao_socio || '';
+                    
+                    // Se tiver CPF (11 dígitos) → pessoa física → sócio majoritário
+                    if (cpfCnpj.length === 11) {
+                        socioMajoritario = {
+                            nome: nome,
+                            qualificacao: qualificacao,
+                            percentual: percentual,
+                            cpf: cpfCnpj,
+                            tipo: 'PESSOA_FISICA'
+                        };
+                    } 
+                    // Se tiver CNPJ (14 dígitos) → pessoa jurídica → controladora
+                    else if (cpfCnpj.length === 14) {
+                        controladora = {
+                            nome: nome,
+                            cnpj: cpfCnpj,
+                            percentual: percentual,
+                            qualificacao: qualificacao,
+                            tipo: 'PESSOA_JURIDICA'
+                        };
+                    }
+                }
+            }
+
             return {
                 cnpj: data.cnpj,
                 razao_social: data.razao_social || "",
@@ -344,13 +516,19 @@ async function buscarCNPJnaBrasilAPI(cnpj) {
                 email: data.email || "",
                 site: data.site || "",
                 uf: data.uf || "",
-                municipio: data.municipio || ""
+                municipio: data.municipio || "",
+                socio_majoritario: socioMajoritario,
+                controladora: controladora,
+                qsa: data.qsa || []
             };
         }
     } catch (err) { /* silencioso */ }
     return null;
 }
 
+// ============================================
+// BUSCA CNPJ NA RECEITAWS (FALLBACK)
+// ============================================
 async function buscarCNPJnaReceitaWS(cnpj) {
     try {
         const url = "https://www.receitaws.com.br/v1/cnpj/" + cnpj;
@@ -376,49 +554,132 @@ async function buscarCNPJnaReceitaWS(cnpj) {
     return null;
 }
 
+// ============================================
+// BUSCA CNPJ NO CSV (USANDO ÍNDICE EM MEMÓRIA)
+// ============================================
 async function buscarCNPJnoCSV(cnpj) {
-    return new Promise(function(resolve, reject) {
-        const file = storage.bucket(BUCKET_NAME).file(CSV_FILE);
-        let encontrado = null;
-        file.createReadStream().pipe(csv())
-            .on("data", function(row) {
-                if (row.CNPJ && row.CNPJ.replace(/\D/g, "") === cnpj) {
-                    encontrado = {
-                        cnpj: row.CNPJ,
-                        razao_social: row["RAZAO SOCIAL"] || row.razao_social || "",
-                        nome_fantasia: row["NOME FANTASIA"] || row.nome_fantasia || "",
-                        porte: row.PORTE || row.porte || "",
-                        data_abertura: row["DATA DE ABERTURA"] || row.data_abertura || "",
-                        situacao: row["SITUACAO"] || row.situacao || "ATIVA",
-                        setor: "",
-                        email: "",
-                        site: "",
-                        uf: row.UF || "",
-                        municipio: row.MUNICIPIO || ""
-                    };
-                }
-            })
-            .on("end", function() { resolve(encontrado); })
-            .on("error", function(err) { reject(err); });
-    });
+    await carregarCSVIndex();
+    if (!csvIndexCNPJ) return null;
+    const cnpjLimpo = normalizarCNPJ(cnpj);
+    return csvIndexCNPJ.get(cnpjLimpo) || null;
 }
 
-async function cadeiaDeBuscaCNPJ(limpo) {
-    const brasil = await buscarCNPJnaBrasilAPI(limpo);
-    if (brasil) {
-        try { await carregarHistorico(); salvarNoHistorico(limpo, brasil); } catch(e) {}
-        return { ...brasil, fonte: "brasilapi" };
+// ============================================
+// BUSCA CNPJ POR NOME NO CSV (USANDO ÍNDICE EM MEMÓRIA)
+// ============================================
+async function buscarCNPJnoCSVPorNome(nome) {
+    await carregarCSVIndex();
+    if (!csvIndexNome) return null;
+    
+    const nomeBusca = nome.toLowerCase().trim();
+    let encontrado = null;
+    
+    // Busca exata primeiro
+    if (csvIndexNome.has(nomeBusca)) {
+        const cnpjs = csvIndexNome.get(nomeBusca);
+        if (cnpjs && cnpjs.length > 0) {
+            const cnpj = cnpjs[0];
+            encontrado = csvIndexCNPJ.get(cnpj);
+            if (encontrado) return encontrado;
+        }
     }
-    const receita = await buscarCNPJnaReceitaWS(limpo);
-    if (receita) {
-        try { await carregarHistorico(); salvarNoHistorico(limpo, receita); } catch(e) {}
-        return { ...receita, fonte: "receitaws" };
+    
+    // Busca parcial (contém a palavra)
+    for (const [key, cnpjs] of csvIndexNome) {
+        if (key.includes(nomeBusca) || nomeBusca.includes(key)) {
+            if (cnpjs && cnpjs.length > 0) {
+                const cnpj = cnpjs[0];
+                encontrado = csvIndexCNPJ.get(cnpj);
+                if (encontrado) return encontrado;
+            }
+        }
     }
-    const csvData = await buscarCNPJnoCSV(limpo);
-    if (csvData) {
-        try { salvarNoHistorico(limpo, csvData); } catch(e) {}
-        return { ...csvData, fonte: "csv_veri" };
+    
+    return null;
+}
+
+// ============================================
+// CADEIA DE BUSCA CNPJ - COM 3 FONTES
+// ============================================
+async function cadeiaDeBuscaCNPJ(entrada) {
+    const limpo = normalizarCNPJ(entrada);
+    let dados = null;
+
+    // ============================================================
+    // SE É CNPJ (14 caracteres) → busca completa
+    // ============================================================
+    if (limpo.length === 14) {
+        // 1. BRASILAPI (mais rápida)
+        dados = await buscarCNPJnaBrasilAPI(limpo);
+        if (dados) {
+            try { await carregarHistorico(); salvarNoHistorico(limpo, dados); } catch(e) {}
+            return { ...dados, fonte: "brasilapi" };
+        }
+
+        // 2. RECEITAWS (fallback)
+        dados = await buscarCNPJnaReceitaWS(limpo);
+        if (dados) {
+            try { await carregarHistorico(); salvarNoHistorico(limpo, dados); } catch(e) {}
+            return { ...dados, fonte: "receitaws" };
+        }
+
+        // 3. BASE PRÓPRIA (CSV 6 colunas)
+        dados = await buscarCNPJnoCSV(limpo);
+        if (dados) {
+            try { salvarNoHistorico(limpo, dados); } catch(e) {}
+            return { ...dados, fonte: "csv_veri" };
+        }
+
+        return null;
     }
+
+    // ============================================================
+    // SE É NOME → busca CNPJ primeiro, depois dados completos
+    // ============================================================
+    if (entrada && entrada.length > 2) {
+        const nomeBusca = entrada.trim();
+
+        // 1. BUSCA NO BANCO LOCAL (cnpjs_famosos.json)
+        const localResult = encontrarCNPJPorNome(nomeBusca);
+        if (localResult && localResult.cnpj) {
+            const cnpjEncontrado = localResult.cnpj.replace(/\D/g, '');
+            dados = await buscarCNPJnaBrasilAPI(cnpjEncontrado);
+            if (dados) {
+                try { await carregarHistorico(); salvarNoHistorico(cnpjEncontrado, dados); } catch(e) {}
+                return { ...dados, fonte: "banco_local", cnpj_original: localResult.cnpj };
+            }
+            // Se BrasilAPI falhar, usa os dados do banco local
+            return {
+                cnpj: cnpjEncontrado,
+                razao_social: localResult.nome_encontrado || nomeBusca,
+                porte: localResult.porte || "MEDIO",
+                data_abertura: "",
+                situacao: "ATIVA",
+                fonte: "banco_local"
+            };
+        }
+
+        // 2. BUSCA NA BASE PRÓPRIA (CSV 6 colunas)
+        const csvResult = await buscarCNPJnoCSVPorNome(nomeBusca);
+        if (csvResult && csvResult.cnpj) {
+            const cnpjEncontrado = csvResult.cnpj.replace(/\D/g, '');
+            dados = await buscarCNPJnaBrasilAPI(cnpjEncontrado);
+            if (dados) {
+                try { await carregarHistorico(); salvarNoHistorico(cnpjEncontrado, dados); } catch(e) {}
+                return { ...dados, fonte: "csv_veri", cnpj_original: csvResult.cnpj };
+            }
+            // Se BrasilAPI falhar, usa os dados do CSV
+            return {
+                cnpj: cnpjEncontrado,
+                razao_social: csvResult.razao_social || nomeBusca,
+                porte: csvResult.porte || "MEDIO",
+                data_abertura: csvResult.data_abertura || "",
+                situacao: csvResult.situacao || "ATIVA",
+                fonte: "csv_veri"
+            };
+        }
+    }
+
     return null;
 }
 
@@ -738,7 +999,10 @@ app.post("/enriquecer", async function(req, res) {
                         site: resultadoBusca.site || "",
                         uf: resultadoBusca.uf || "",
                         municipio: resultadoBusca.municipio || "",
-                        fonte: resultadoBusca.fonte || "desconhecida"
+                        fonte: resultadoBusca.fonte || "desconhecida",
+                        socio_majoritario: resultadoBusca.socio_majoritario || null,
+                        controladora: resultadoBusca.controladora || null,
+                        qsa: resultadoBusca.qsa || []
                     };
                     console.log("✅ Dados cadastrais obtidos via BrasilAPI para CNPJ:", cnpjLimpo);
                 }
@@ -818,7 +1082,10 @@ app.post("/enriquecer", async function(req, res) {
             setor: dadosCadastraisCompletos.setor || dadosOrquestrador.dados_cadastrais.setor || "",
             site: dadosCadastraisCompletos.site || dadosOrquestrador.dados_cadastrais.site || "",
             uf: dadosCadastraisCompletos.uf || dadosOrquestrador.dados_cadastrais.uf || ufEmpresa || "",
-            municipio: dadosCadastraisCompletos.municipio || dadosOrquestrador.dados_cadastrais.municipio || ""
+            municipio: dadosCadastraisCompletos.municipio || dadosOrquestrador.dados_cadastrais.municipio || "",
+            socio_majoritario: dadosCadastraisCompletos.socio_majoritario || null,
+            controladora: dadosCadastraisCompletos.controladora || null,
+            qsa: dadosCadastraisCompletos.qsa || []
         };
 
         // ============================================================
@@ -1070,7 +1337,10 @@ app.post("/enriquecer", async function(req, res) {
                 municipio: dadosCadastrais.municipio || null,
                 faturamento_mensal_estimado: faturamentoMensal,
                 faturamento_anual: dadosCadastrais.faturamento_anual || null,
-                faturamento_fonte: dadosCadastrais.faturamento_fonte || "nao_informado"
+                faturamento_fonte: dadosCadastrais.faturamento_fonte || "nao_informado",
+                socio_majoritario: dadosCadastrais.socio_majoritario || null,
+                controladora: dadosCadastrais.controladora || null,
+                qsa: dadosCadastrais.qsa || []
             },
             motor: resultadoMotor
         };
