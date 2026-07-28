@@ -19,6 +19,7 @@
 // CORRIGIDO: Lógica de busca com 3 fontes (BrasilAPI -> ReceitaWS -> CSV)
 // CORRIGIDO: Indexação em memória do CSV para busca instantânea
 // CORRIGIDO: Extração de sócio majoritário e controladora
+// CORRIGIDO: Todas as strings com crases e sintaxe 100% verificada
 // ============================================
 
 const express = require("express");
@@ -109,7 +110,6 @@ const CSV_PATH = path.join(__dirname, 'dados-abertos-zip', 'cnpj_busca_6_colunas
 // ============================================================
 function normalizarCNPJ(doc) {
     if (!doc) return '';
-    // Remove apenas caracteres especiais, mantém letras e números
     return doc.replace(/[.\-\/]/g, '').toUpperCase();
 }
 
@@ -199,7 +199,6 @@ async function carregarCSVIndex() {
                     });
                 }
                 
-                // Indexa por nome (razao social e nome fantasia)
                 if (razao) {
                     if (!csvIndexNome.has(razao)) {
                         csvIndexNome.set(razao, []);
@@ -216,7 +215,7 @@ async function carregarCSVIndex() {
             .on("end", function() {
                 csvIndexCarregado = true;
                 const tempo = Date.now() - inicio;
-                console.log(✅ CSV indexado em memória: ${linhas} empresas em ${tempo}ms);
+                console.log(`✅ CSV indexado em memória: ${linhas} empresas em ${tempo}ms`);
                 resolve();
             })
             .on("error", function(err) {
@@ -463,14 +462,10 @@ async function buscarCNPJnaBrasilAPI(cnpj) {
         if (!response.ok) return null;
         const data = await response.json();
         if (data && !data.error) {
-            // ============================================================
-            // EXTRAI SÓCIO MAJORITÁRIO E CONTROLADORA
-            // ============================================================
             let socioMajoritario = null;
             let controladora = null;
             
             if (data.qsa && data.qsa.length > 0) {
-                // Ordena por percentual (maior primeiro)
                 const sociosOrdenados = data.qsa.slice().sort(function(a, b) {
                     return (b.percentual_capital_social || 0) - (a.percentual_capital_social || 0);
                 });
@@ -482,7 +477,6 @@ async function buscarCNPJnaBrasilAPI(cnpj) {
                     const percentual = socioPrincipal.percentual_capital_social || 0;
                     const qualificacao = socioPrincipal.qualificacao_socio || '';
                     
-                    // Se tiver CPF (11 dígitos) → pessoa física → sócio majoritário
                     if (cpfCnpj.length === 11) {
                         socioMajoritario = {
                             nome: nome,
@@ -491,9 +485,7 @@ async function buscarCNPJnaBrasilAPI(cnpj) {
                             cpf: cpfCnpj,
                             tipo: 'PESSOA_FISICA'
                         };
-                    } 
-                    // Se tiver CNPJ (14 dígitos) → pessoa jurídica → controladora
-                    else if (cpfCnpj.length === 14) {
+                    } else if (cpfCnpj.length === 14) {
                         controladora = {
                             nome: nome,
                             cnpj: cpfCnpj,
@@ -574,7 +566,6 @@ async function buscarCNPJnoCSVPorNome(nome) {
     const nomeBusca = nome.toLowerCase().trim();
     let encontrado = null;
     
-    // Busca exata primeiro
     if (csvIndexNome.has(nomeBusca)) {
         const cnpjs = csvIndexNome.get(nomeBusca);
         if (cnpjs && cnpjs.length > 0) {
@@ -584,7 +575,6 @@ async function buscarCNPJnoCSVPorNome(nome) {
         }
     }
     
-    // Busca parcial (contém a palavra)
     for (const [key, cnpjs] of csvIndexNome) {
         if (key.includes(nomeBusca) || nomeBusca.includes(key)) {
             if (cnpjs && cnpjs.length > 0) {
@@ -605,25 +595,19 @@ async function cadeiaDeBuscaCNPJ(entrada) {
     const limpo = normalizarCNPJ(entrada);
     let dados = null;
 
-    // ============================================================
-    // SE É CNPJ (14 caracteres) → busca completa
-    // ============================================================
     if (limpo.length === 14) {
-        // 1. BRASILAPI (mais rápida)
         dados = await buscarCNPJnaBrasilAPI(limpo);
         if (dados) {
             try { await carregarHistorico(); salvarNoHistorico(limpo, dados); } catch(e) {}
             return { ...dados, fonte: "brasilapi" };
         }
 
-        // 2. RECEITAWS (fallback)
         dados = await buscarCNPJnaReceitaWS(limpo);
         if (dados) {
             try { await carregarHistorico(); salvarNoHistorico(limpo, dados); } catch(e) {}
             return { ...dados, fonte: "receitaws" };
         }
 
-        // 3. BASE PRÓPRIA (CSV 6 colunas)
         dados = await buscarCNPJnoCSV(limpo);
         if (dados) {
             try { salvarNoHistorico(limpo, dados); } catch(e) {}
@@ -633,13 +617,9 @@ async function cadeiaDeBuscaCNPJ(entrada) {
         return null;
     }
 
-    // ============================================================
-    // SE É NOME → busca CNPJ primeiro, depois dados completos
-    // ============================================================
     if (entrada && entrada.length > 2) {
         const nomeBusca = entrada.trim();
 
-        // 1. BUSCA NO BANCO LOCAL (cnpjs_famosos.json)
         const localResult = encontrarCNPJPorNome(nomeBusca);
         if (localResult && localResult.cnpj) {
             const cnpjEncontrado = localResult.cnpj.replace(/\D/g, '');
@@ -648,7 +628,6 @@ async function cadeiaDeBuscaCNPJ(entrada) {
                 try { await carregarHistorico(); salvarNoHistorico(cnpjEncontrado, dados); } catch(e) {}
                 return { ...dados, fonte: "banco_local", cnpj_original: localResult.cnpj };
             }
-            // Se BrasilAPI falhar, usa os dados do banco local
             return {
                 cnpj: cnpjEncontrado,
                 razao_social: localResult.nome_encontrado || nomeBusca,
@@ -659,7 +638,6 @@ async function cadeiaDeBuscaCNPJ(entrada) {
             };
         }
 
-        // 2. BUSCA NA BASE PRÓPRIA (CSV 6 colunas)
         const csvResult = await buscarCNPJnoCSVPorNome(nomeBusca);
         if (csvResult && csvResult.cnpj) {
             const cnpjEncontrado = csvResult.cnpj.replace(/\D/g, '');
@@ -668,7 +646,6 @@ async function cadeiaDeBuscaCNPJ(entrada) {
                 try { await carregarHistorico(); salvarNoHistorico(cnpjEncontrado, dados); } catch(e) {}
                 return { ...dados, fonte: "csv_veri", cnpj_original: csvResult.cnpj };
             }
-            // Se BrasilAPI falhar, usa os dados do CSV
             return {
                 cnpj: cnpjEncontrado,
                 razao_social: csvResult.razao_social || nomeBusca,
@@ -1242,7 +1219,6 @@ app.post("/enriquecer", async function(req, res) {
         // ============================================================
         // PREPARA DADOS PARA O MOTOR COM FATURAMENTO_ANUAL (CORRIGIDO)
         // ============================================================
-        // CORREÇÃO: Garantir que req.body.negocio seja string antes de usar split
         const negocioStr = req.body.negocio ? String(req.body.negocio) : "";
 
         const dadosMotor = {
@@ -1420,7 +1396,6 @@ app.post("/enriquecer", async function(req, res) {
 // ============================================
 const PORT = process.env.PORT || 3000;
 
-// Inicia o servidor
 const server = app.listen(PORT, '0.0.0.0', function() {
     console.log("✅ VERI API v" + VERSAO_API + " rodando na porta " + PORT);
     console.log("⚙️ Motor VERI integrado à rota /enriquecer");
@@ -1435,5 +1410,4 @@ server.on('error', function(err) {
     }
 });
 
-// Exporta o app para testes
 module.exports = app;
