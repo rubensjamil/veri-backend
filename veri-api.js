@@ -215,7 +215,7 @@ async function carregarCSVIndex() {
             .on("end", function() {
                 csvIndexCarregado = true;
                 const tempo = Date.now() - inicio;
-                console.log(✅ CSV indexado em memória: ${linhas} empresas em ${tempo}ms);
+                console.log(`✅ CSV indexado em memória: ${linhas} empresas em ${tempo}ms`);
                 resolve();
             })
             .on("error", function(err) {
