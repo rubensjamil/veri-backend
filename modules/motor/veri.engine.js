@@ -40,10 +40,10 @@ function calcularFinanceiro(dados) {
     const parcelas = negocio.parcelas || 1;
     const valorParcela = valorNegocio / parcelas;
 
-    const negocioStr = dados.negocio || '';
+    const negocioStr = typeof dados.negocio === 'string'? dados.negocio: String(dados.negocio?.tipo ||dados.negocio?.negocio || '');
+
     const isCompra = negocioStr.startsWith('comprar') || negocioStr.startsWith('contratar');
     const isVenda = negocioStr.startsWith('vender');
-
     let ticketUsado = 0;
     let fonte = '';
 
@@ -118,7 +118,7 @@ function calcularFinanceiro(dados) {
         }
     }
 
-    if (negocio.tipo_pagamento === 'aprazo') {
+    if (negocio.tipo_pagamento === 'a prazo') {
         financeiro = Math.min(100, financeiro * 1.2);
     }
 
@@ -376,7 +376,10 @@ function calcularRiscos(dados) {
     var parcelas = dados.negocio.parcelas || 1;
     var valorParcela = (parcelas > 0) ? valorNegocio / parcelas : valorNegocio;
 
-    var negocioStr = dados.negocio || '';
+    var negocioStr = typeof dados.negocio === 'string'
+    ? dados.negocio
+    : String(dados.negocio?.tipo || dados.negocio?.negocio || '');
+
     var isCompra = negocioStr.startsWith('comprar') || negocioStr.startsWith('contratar');
     var isVenda = negocioStr.startsWith('vender');
 
