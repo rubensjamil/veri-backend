@@ -215,7 +215,7 @@ async function carregarCSVIndex() {
             .on("end", function() {
                 csvIndexCarregado = true;
                 const tempo = Date.now() - inicio;
-                console.log(`✅ CSV indexado em memória: ${linhas} empresas em ${tempo}ms`);
+                console.log(✅ CSV indexado em memória: ${linhas} empresas em ${tempo}ms);
                 resolve();
             })
             .on("error", function(err) {
@@ -453,7 +453,7 @@ async function fetchComoNavegador(url, timeoutMs) {
 }
 
 // ============================================
-// BUSCA CNPJ NA BRASILAPI COM SÓCIOS
+// BUSCA CNPJ NA BRASILAPI COM SÓCIOS (CORRIGIDO)
 // ============================================
 async function buscarCNPJnaBrasilAPI(cnpj) {
     try {
@@ -466,33 +466,65 @@ async function buscarCNPJnaBrasilAPI(cnpj) {
             let controladora = null;
             
             if (data.qsa && data.qsa.length > 0) {
+                // Ordena por percentual (maior primeiro)
                 const sociosOrdenados = data.qsa.slice().sort(function(a, b) {
                     return (b.percentual_capital_social || 0) - (a.percentual_capital_social || 0);
                 });
                 
                 const socioPrincipal = sociosOrdenados[0];
                 if (socioPrincipal) {
-                    const cpfCnpj = socioPrincipal.cpf_cnpj_socio || '';
+                    const documento = socioPrincipal.cpf_cnpj_socio || '';
                     const nome = socioPrincipal.nome_socio || '';
                     const percentual = socioPrincipal.percentual_capital_social || 0;
                     const qualificacao = socioPrincipal.qualificacao_socio || '';
                     
-                    if (cpfCnpj.length === 11) {
+                    // Remove caracteres não numéricos para contar dígitos
+                    const docLimpo = documento.replace(/\D/g, '');
+                    
+                    // Se tiver 11 dígitos → CPF → pessoa física → sócio majoritário
+                    if (docLimpo.length === 11) {
                         socioMajoritario = {
                             nome: nome,
                             qualificacao: qualificacao,
                             percentual: percentual,
-                            cpf: cpfCnpj,
+                            cpf: documento,
                             tipo: 'PESSOA_FISICA'
                         };
-                    } else if (cpfCnpj.length === 14) {
+                    } 
+                    // Se tiver 14 dígitos → CNPJ → pessoa jurídica → controladora
+                    else if (docLimpo.length === 14) {
                         controladora = {
                             nome: nome,
-                            cnpj: cpfCnpj,
+                            cnpj: documento,
                             percentual: percentual,
                             qualificacao: qualificacao,
                             tipo: 'PESSOA_JURIDICA'
                         };
+                    } else {
+                        // Se não tiver documento ou estiver mascarado, usa a qualificação para inferir
+                        // Qualificações comuns de pessoa física: "Sócio-Administrador", "Sócio", "Diretor"
+                        const qualificacoesPF = ['SÓCIO-ADMINISTRADOR', 'SÓCIO', 'DIRETOR', 'ADMINISTRADOR'];
+                        const isPF = qualificacoesPF.some(function(q) {
+                            return qualificacao.toUpperCase().indexOf(q) !== -1;
+                        });
+                        if (isPF) {
+                            socioMajoritario = {
+                                nome: nome,
+                                qualificacao: qualificacao,
+                                percentual: percentual,
+                                cpf: documento,
+                                tipo: 'PESSOA_FISICA'
+                            };
+                        } else {
+                            // Fallback: trata como pessoa jurídica
+                            controladora = {
+                                nome: nome,
+                                cnpj: documento,
+                                percentual: percentual,
+                                qualificacao: qualificacao,
+                                tipo: 'PESSOA_JURIDICA'
+                            };
+                        }
                     }
                 }
             }
