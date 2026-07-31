@@ -22,6 +22,7 @@
 // CORRIGIDO: Todas as strings com crases e sintaxe 100% verificada
 // CORRIGIDO: carregarCSVIndex com verificação de existência do arquivo (fs.existsSync)
 // CORRIGIDO: carregarCSVIndex não derruba o servidor em caso de erro
+// CORRIGIDO: baixarCSVdoStorage() ativada na inicialização
 // ============================================
 
 const express = require("express");
@@ -164,6 +165,36 @@ function encontrarCNPJPorNome(nome, uf) {
         }
     }
     return null;
+}
+
+// ============================================
+// BAIXA O CSV DO GOOGLE CLOUD STORAGE
+// ============================================
+async function baixarCSVdoStorage() {
+    try {
+        const bucket = storage.bucket(BUCKET_NAME);
+        const file = bucket.file(CSV_FILE);
+        const [exists] = await file.exists();
+        
+        if (!exists) {
+            console.warn('⚠️ CSV não encontrado no Storage:', CSV_FILE);
+            return false;
+        }
+        
+        // Cria a pasta se não existir
+        const dir = path.dirname(CSV_PATH);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        
+        console.log('📥 Baixando CSV do Google Cloud Storage...');
+        await file.download({ destination: CSV_PATH });
+        console.log('✅ CSV baixado do Google Cloud Storage com sucesso.');
+        return true;
+    } catch (err) {
+        console.warn('⚠️ Erro ao baixar CSV do Storage:', err.message);
+        return false;
+    }
 }
 
 // ============================================
@@ -1433,24 +1464,32 @@ app.post("/enriquecer", async function(req, res) {
 // ============================================
 const PORT = process.env.PORT || 3000;
 
-// ============================================================
-// CARREGA O CSV NA INICIALIZAÇÃO (COM TRATAMENTO DE ERRO)
-// ============================================================
 async function iniciarServidor() {
+    console.log('🚀 Iniciando servidor VERI API...');
+    
+    // 1. Tenta baixar o CSV do Storage
+    const baixou = await baixarCSVdoStorage();
+    if (baixou) {
+        console.log('📊 CSV disponível localmente.');
+    } else {
+        console.warn('⚠️ CSV não disponível. Fallback para BrasilAPI e banco local ativo.');
+    }
+    
+    // 2. Tenta carregar o CSV em memória (se existir)
     try {
-        // Tenta carregar o CSV (não bloqueia se falhar)
         await carregarCSVIndex();
     } catch (err) {
         console.warn('⚠️ Erro ao carregar CSV na inicialização:', err.message);
         console.warn('⚠️ O servidor continuará rodando sem o índice CSV.');
     }
-
+    
+    // 3. Sobe o servidor
     const server = app.listen(PORT, '0.0.0.0', function() {
         console.log("✅ VERI API v" + VERSAO_API + " rodando na porta " + PORT);
         console.log("⚙️ Motor VERI integrado à rota /enriquecer");
         console.log("📊 Busca BrasilAPI ativada para porte e data_abertura");
         console.log('🚀 REVISÃO CORRIGIDA - JSON_INVALIDO RESOLVIDO');
-        console.log('📊 CSV indexado: ' + (csvIndexCarregado ? '✅ SIM' : '⚠️ NÃO (fallback ativo)'));
+        console.log('📊 CSV indexado: ' + (csvIndexCarregado ? '✅ SIM (busca por nome ativa)' : '⚠️ NÃO (fallback ativo)'));
     });
 
     server.on('error', function(err) {
