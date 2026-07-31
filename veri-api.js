@@ -57,7 +57,7 @@ const config = require("./motor.config");
 const app = express();
 
 // ============================================================
-// CORS
+// CORS - LIBERADO PARA TODAS AS ORIGENS
 // ============================================================
 app.use(cors());
 app.use(express.json());
@@ -172,7 +172,6 @@ async function baixarCSVdoStorage() {
             return false;
         }
         
-        // Cria a pasta se não existir
         const dir = path.dirname(CSV_PATH);
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
@@ -200,9 +199,6 @@ async function carregarCSVIndex() {
     csvIndexCNPJ = new Map();
     csvIndexNome = new Map();
     
-    // ============================================================
-    // VERIFICA SE O ARQUIVO EXISTE ANTES DE TENTAR LER
-    // ============================================================
     if (!fs.existsSync(CSV_PATH)) {
         console.warn('⚠️ CSV não encontrado em:', CSV_PATH);
         console.warn('⚠️ Busca por nome/CNPJ no CSV desativada. Usando apenas BrasilAPI e banco local.');
@@ -249,13 +245,13 @@ async function carregarCSVIndex() {
             .on("end", function() {
                 csvIndexCarregado = true;
                 const tempo = Date.now() - inicio;
-                console.log(`✅ CSV indexado em memória: ${linhas} empresas em ${tempo}ms`);
+                console.log(✅ CSV indexado em memória: ${linhas} empresas em ${tempo}ms);
                 resolve();
             })
             .on("error", function(err) {
                 console.error('❌ Erro ao carregar CSV:', err);
                 csvIndexCarregado = true;
-                resolve(); // Resolve mesmo com erro para não travar o servidor
+                resolve();
             });
     });
 }
@@ -576,7 +572,6 @@ async function buscarCNPJnaBrasilAPI(cnpj) {
     } catch (err) { /* silencioso */ }
     return null;
 }
-
 // ============================================
 // BUSCA CNPJ NA RECEITAWS (FALLBACK)
 // ============================================
@@ -973,7 +968,12 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
 // ============================================================
 app.post("/enriquecer", async function(req, res) {
     const inicio = Date.now();
-    const { nome, cnpj, cpf, valor, porte, ticket_medio } = req.body;
+    const { 
+        nome, cnpj, cpf, valor, porte, ticket_medio,
+        email_analisado, whatsapp_analisado,
+        email_solicitante, whatsapp_solicitante,
+        renda_solicitante, renda_analisado
+    } = req.body;
 
     if (!nome && !cnpj && !cpf) {
         return res.status(400).json({
@@ -1121,7 +1121,11 @@ app.post("/enriquecer", async function(req, res) {
             municipio: dadosCadastraisCompletos.municipio || dadosOrquestrador.dados_cadastrais.municipio || "",
             socio_majoritario: dadosCadastraisCompletos.socio_majoritario || null,
             controladora: dadosCadastraisCompletos.controladora || null,
-            qsa: dadosCadastraisCompletos.qsa || []
+            qsa: dadosCadastraisCompletos.qsa || [],
+            email_analisado: email_analisado || "",
+            whatsapp_analisado: whatsapp_analisado || "",
+            email_solicitante: email_solicitante || "",
+            whatsapp_solicitante: whatsapp_solicitante || ""
         };
 
         // ============================================================
@@ -1288,14 +1292,18 @@ app.post("/enriquecer", async function(req, res) {
                 situacao: dadosCadastrais.situacao || "ATIVA",
                 data_abertura: dadosCadastrais.data_abertura || "",
                 tipo: req.body.analisado_tipo || "empresa",
-                renda: req.body.analisado_renda || 0,
+                renda: renda_analisado || 0,
                 faturamento_anual: dadosCadastrais.faturamento_anual || null,
-                uf: dadosCadastrais.uf || ""
+                uf: dadosCadastrais.uf || "",
+                email: email_analisado || "",
+                whatsapp: whatsapp_analisado || ""
             },
             solicitante: {
                 porte: (req.body.analisante && req.body.analisante.porte) || "MEDIO",
                 tipo: (req.body.analisante && req.body.analisante.tipo) || "empresa",
-                renda: (req.body.analisante && req.body.analisante.renda) || 0
+                renda: renda_solicitante || 0,
+                email: email_solicitante || "",
+                whatsapp: whatsapp_solicitante || ""
             },
             relacionamento: {
                 conhecimento: req.body.conhecimento || "razoavel",
@@ -1345,7 +1353,7 @@ app.post("/enriquecer", async function(req, res) {
             };
             var dadosAnalisado = {
                 tipo: req.body.analisado_tipo || "empresa",
-                renda: req.body.analisado_renda || 0,
+                renda: renda_analisado || 0,
                 porte: dadosCadastrais.porte || "MEDIO",
                 data_abertura: dadosCadastrais.data_abertura || "",
                 situacao: dadosCadastrais.situacao || "ATIVA",
@@ -1375,7 +1383,11 @@ app.post("/enriquecer", async function(req, res) {
                 faturamento_fonte: dadosCadastrais.faturamento_fonte || "nao_informado",
                 socio_majoritario: dadosCadastrais.socio_majoritario || null,
                 controladora: dadosCadastrais.controladora || null,
-                qsa: dadosCadastrais.qsa || []
+                qsa: dadosCadastrais.qsa || [],
+                email_analisado: dadosCadastrais.email_analisado || "",
+                whatsapp_analisado: dadosCadastrais.whatsapp_analisado || "",
+                email_solicitante: dadosCadastrais.email_solicitante || "",
+                whatsapp_solicitante: dadosCadastrais.whatsapp_solicitante || ""
             },
             motor: resultadoMotor
         };
