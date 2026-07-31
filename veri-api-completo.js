@@ -20,8 +20,6 @@
 // CORRIGIDO: Indexação em memória do CSV para busca instantânea
 // CORRIGIDO: Extração de sócio majoritário e controladora
 // CORRIGIDO: Todas as strings com crases e sintaxe 100% verificada
-// CORRIGIDO: carregarCSVIndex com verificação de existência do arquivo (fs.existsSync)
-// CORRIGIDO: carregarCSVIndex não derruba o servidor em caso de erro
 // ============================================
 
 const express = require("express");
@@ -167,7 +165,7 @@ function encontrarCNPJPorNome(nome, uf) {
 }
 
 // ============================================
-// CARREGA O CSV EM MEMÓRIA - CORRIGIDO
+// CARREGA O CSV EM MEMÓRIA (UMA ÚNICA VEZ)
 // ============================================
 async function carregarCSVIndex() {
     if (csvIndexCarregado) return;
@@ -177,16 +175,6 @@ async function carregarCSVIndex() {
     
     csvIndexCNPJ = new Map();
     csvIndexNome = new Map();
-    
-    // ============================================================
-    // VERIFICA SE O ARQUIVO EXISTE ANTES DE TENTAR LER
-    // ============================================================
-    if (!fs.existsSync(CSV_PATH)) {
-        console.warn('⚠️ CSV não encontrado em:', CSV_PATH);
-        console.warn('⚠️ Busca por nome/CNPJ no CSV desativada. Usando apenas BrasilAPI e banco local.');
-        csvIndexCarregado = true;
-        return;
-    }
     
     return new Promise(function(resolve, reject) {
         let linhas = 0;
@@ -227,13 +215,12 @@ async function carregarCSVIndex() {
             .on("end", function() {
                 csvIndexCarregado = true;
                 const tempo = Date.now() - inicio;
-                console.log(✅ CSV indexado em memória: ${linhas} empresas em ${tempo}ms);
+                console.log(`✅ CSV indexado em memória: ${linhas} empresas em ${tempo}ms`);
                 resolve();
             })
             .on("error", function(err) {
                 console.error('❌ Erro ao carregar CSV:', err);
-                csvIndexCarregado = true;
-                resolve(); // Resolve mesmo com erro para não travar o servidor
+                reject(err);
             });
     });
 }
@@ -466,7 +453,7 @@ async function fetchComoNavegador(url, timeoutMs) {
 }
 
 // ============================================
-// BUSCA CNPJ NA BRASILAPI COM SÓCIOS (CORRIGIDO)
+// BUSCA CNPJ NA BRASILAPI COM SÓCIOS
 // ============================================
 async function buscarCNPJnaBrasilAPI(cnpj) {
     try {
@@ -485,51 +472,27 @@ async function buscarCNPJnaBrasilAPI(cnpj) {
                 
                 const socioPrincipal = sociosOrdenados[0];
                 if (socioPrincipal) {
-                    const documento = socioPrincipal.cpf_cnpj_socio || '';
+                    const cpfCnpj = socioPrincipal.cpf_cnpj_socio || '';
                     const nome = socioPrincipal.nome_socio || '';
                     const percentual = socioPrincipal.percentual_capital_social || 0;
                     const qualificacao = socioPrincipal.qualificacao_socio || '';
                     
-                    const docLimpo = documento.replace(/\D/g, '');
-                    
-                    if (docLimpo.length === 11) {
+                    if (cpfCnpj.length === 11) {
                         socioMajoritario = {
                             nome: nome,
                             qualificacao: qualificacao,
                             percentual: percentual,
-                            cpf: documento,
+                            cpf: cpfCnpj,
                             tipo: 'PESSOA_FISICA'
                         };
-                    } else if (docLimpo.length === 14) {
+                    } else if (cpfCnpj.length === 14) {
                         controladora = {
                             nome: nome,
-                            cnpj: documento,
+                            cnpj: cpfCnpj,
                             percentual: percentual,
                             qualificacao: qualificacao,
                             tipo: 'PESSOA_JURIDICA'
                         };
-                    } else {
-                        const qualificacoesPF = ['SÓCIO-ADMINISTRADOR', 'SÓCIO', 'DIRETOR', 'ADMINISTRADOR'];
-                        const isPF = qualificacoesPF.some(function(q) {
-                            return qualificacao.toUpperCase().indexOf(q) !== -1;
-                        });
-                        if (isPF) {
-                            socioMajoritario = {
-                                nome: nome,
-                                qualificacao: qualificacao,
-                                percentual: percentual,
-                                cpf: documento,
-                                tipo: 'PESSOA_FISICA'
-                            };
-                        } else {
-                            controladora = {
-                                nome: nome,
-                                cnpj: documento,
-                                percentual: percentual,
-                                qualificacao: qualificacao,
-                                tipo: 'PESSOA_JURIDICA'
-                            };
-                        }
                     }
                 }
             }
@@ -1433,35 +1396,18 @@ app.post("/enriquecer", async function(req, res) {
 // ============================================
 const PORT = process.env.PORT || 3000;
 
-// ============================================================
-// CARREGA O CSV NA INICIALIZAÇÃO (COM TRATAMENTO DE ERRO)
-// ============================================================
-async function iniciarServidor() {
-    try {
-        // Tenta carregar o CSV (não bloqueia se falhar)
-        await carregarCSVIndex();
-    } catch (err) {
-        console.warn('⚠️ Erro ao carregar CSV na inicialização:', err.message);
-        console.warn('⚠️ O servidor continuará rodando sem o índice CSV.');
+const server = app.listen(PORT, '0.0.0.0', function() {
+    console.log("✅ VERI API v" + VERSAO_API + " rodando na porta " + PORT);
+    console.log("⚙️ Motor VERI integrado à rota /enriquecer");
+    console.log("📊 Busca BrasilAPI ativada para porte e data_abertura");
+    console.log('🚀 REVISÃO CORRIGIDA - JSON_INVALIDO RESOLVIDO');
+});
+
+server.on('error', function(err) {
+    console.error('❌ Erro no servidor:', err);
+    if (err.code === 'EADDRINUSE') {
+        console.error('⚠️ Porta ' + PORT + ' já está em uso!');
     }
-
-    const server = app.listen(PORT, '0.0.0.0', function() {
-        console.log("✅ VERI API v" + VERSAO_API + " rodando na porta " + PORT);
-        console.log("⚙️ Motor VERI integrado à rota /enriquecer");
-        console.log("📊 Busca BrasilAPI ativada para porte e data_abertura");
-        console.log('🚀 REVISÃO CORRIGIDA - JSON_INVALIDO RESOLVIDO');
-        console.log('📊 CSV indexado: ' + (csvIndexCarregado ? '✅ SIM' : '⚠️ NÃO (fallback ativo)'));
-    });
-
-    server.on('error', function(err) {
-        console.error('❌ Erro no servidor:', err);
-        if (err.code === 'EADDRINUSE') {
-            console.error('⚠️ Porta ' + PORT + ' já está em uso!');
-        }
-    });
-}
-
-// Inicia o servidor
-iniciarServidor();
+});
 
 module.exports = app;
