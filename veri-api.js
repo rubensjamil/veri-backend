@@ -60,12 +60,7 @@ const app = express();
 // CORS
 // ============================================================
 app.use(cors({
-  origin: [
-    "https://www.veri.app.br",
-    "https://veri.app.br",
-    "http://localhost:8080",
-    "https://meu-site-veri.vercel.app"
-  ],
+  origin:"*" 
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
