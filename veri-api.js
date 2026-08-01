@@ -24,6 +24,8 @@
 // CORRIGIDO: carregarCSVIndex não derruba o servidor em caso de erro
 // CORRIGIDO: baixarCSVdoStorage() ativada na inicialização
 // CORRIGIDO: Suporte a credenciais via variável de ambiente (GOOGLE_APPLICATION_CREDENTIALS_JSON)
+// CORRIGIDO: Caminho do Secret File atualizado para google-creds.json
+// CORRIGIDO: Erro de sintaxe na linha 289 (crases no console.log)
 // ============================================
 
 const express = require("express");
@@ -42,7 +44,7 @@ require('dotenv').config();
 let credenciaisCarregadas = false;
 
 // 1. Tenta carregar do Secret File (Render)
-const secretPath = '/etc/secrets/veri-platforms-77eb414bc5bd.json';
+const secretPath = '/etc/secrets/google-creds.json';
 if (fs.existsSync(secretPath)) {
     process.env.GOOGLE_APPLICATION_CREDENTIALS = secretPath;
     console.log('✅ Credenciais do Google Cloud carregadas do Secret File.');
