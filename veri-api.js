@@ -23,6 +23,7 @@
 // CORRIGIDO: carregarCSVIndex com verificação de existência do arquivo (fs.existsSync)
 // CORRIGIDO: carregarCSVIndex não derruba o servidor em caso de erro
 // CORRIGIDO: baixarCSVdoStorage() ativada na inicialização
+// CORRIGIDO: Suporte a credenciais via variável de ambiente (GOOGLE_APPLICATION_CREDENTIALS_JSON)
 // ============================================
 
 const express = require("express");
@@ -34,6 +35,46 @@ const csv = require("csv-parser");
 const crypto = require("crypto");
 
 require('dotenv').config();
+
+// ============================================================
+// CONFIGURA CREDENCIAIS DO GOOGLE CLOUD
+// ============================================================
+let credenciaisCarregadas = false;
+
+// 1. Tenta carregar do Secret File (Render)
+const secretPath = '/etc/secrets/veri-platforms-77eb414bc5bd.json';
+if (fs.existsSync(secretPath)) {
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = secretPath;
+    console.log('✅ Credenciais do Google Cloud carregadas do Secret File.');
+    credenciaisCarregadas = true;
+}
+
+// 2. Tenta carregar da variável de ambiente (fallback)
+if (!credenciaisCarregadas && process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+    try {
+        const tempPath = '/tmp/credenciais.json';
+        fs.writeFileSync(tempPath, process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+        process.env.GOOGLE_APPLICATION_CREDENTIALS = tempPath;
+        console.log('✅ Credenciais do Google Cloud configuradas via variável de ambiente.');
+        credenciaisCarregadas = true;
+    } catch (err) {
+        console.warn('⚠️ Erro ao criar arquivo temporário de credenciais:', err.message);
+    }
+}
+
+// 3. Tenta carregar do arquivo local (último fallback)
+if (!credenciaisCarregadas) {
+    const localCredPath = path.join(__dirname, 'credenciais.json');
+    if (fs.existsSync(localCredPath)) {
+        process.env.GOOGLE_APPLICATION_CREDENTIALS = localCredPath;
+        console.log('✅ Credenciais do Google Cloud carregadas do arquivo local.');
+        credenciaisCarregadas = true;
+    }
+}
+
+if (!credenciaisCarregadas) {
+    console.warn('⚠️ Nenhuma credencial do Google Cloud encontrada. O Storage pode não funcionar.');
+}
 
 // ============================================
 // VERSÕES
@@ -245,7 +286,7 @@ async function carregarCSVIndex() {
             .on("end", function() {
                 csvIndexCarregado = true;
                 const tempo = Date.now() - inicio;
-                console.log(`✅ CSV indexado em memória: ${linhas} empresas em ${tempo}ms`);
+                console.log(✅ CSV indexado em memória: ${linhas} empresas em ${tempo}ms);
                 resolve();
             })
             .on("error", function(err) {
@@ -572,6 +613,7 @@ async function buscarCNPJnaBrasilAPI(cnpj) {
     } catch (err) { /* silencioso */ }
     return null;
 }
+
 // ============================================
 // BUSCA CNPJ NA RECEITAWS (FALLBACK)
 // ============================================
