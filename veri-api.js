@@ -51,7 +51,7 @@ if (fs.existsSync(secretPath)) {
     credenciaisCarregadas = true;
 }
 
-// 2. Tenta carregar da variável de ambiente (fallback)
+// 2. Se não houver Secret File, tenta carregar da variável de ambiente
 if (!credenciaisCarregadas && process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
     try {
         const tempPath = '/tmp/credenciais.json';
@@ -64,7 +64,7 @@ if (!credenciaisCarregadas && process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
     }
 }
 
-// 3. Tenta carregar do arquivo local (último fallback)
+// 3. Último fallback: arquivo local
 if (!credenciaisCarregadas) {
     const localCredPath = path.join(__dirname, 'credenciais.json');
     if (fs.existsSync(localCredPath)) {
@@ -77,7 +77,6 @@ if (!credenciaisCarregadas) {
 if (!credenciaisCarregadas) {
     console.warn('⚠️ Nenhuma credencial do Google Cloud encontrada. O Storage pode não funcionar.');
 }
-
 // ============================================
 // VERSÕES
 // ============================================
