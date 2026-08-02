@@ -1,31 +1,9 @@
 // ============================================
 // VERI API - Motor Transversal v3.2
 // Versão completa com todas as rotas
-// CORRIGIDO: Busca BrasilAPI no /enriquecer
-// CORRIGIDO: Passa faturamento_anual para o motor
-// ADAPTADO: Valor da Contratação/Compra/Venda
-// ADAPTADO: Extração de UF para o orchestrator
-// CORRIGIDO: Logs para diagnóstico da BrasilAPI
-// CORRIGIDO: Fallback para ReceitaWS
-// CORRIGIDO: Captura de valor com logs
-// CORRIGIDO: Dotenv para leitura de .env
-// CORRIGIDO: Removida duplicação da variável 'secoes'
-// CORRIGIDO: Fluxo de validação nunca bloqueia
-// CORRIGIDO: Substituído optional chaining (?.) por compatibilidade
-// CORRIGIDO: Erro "negocioStr.startsWith is not a function"
-// CORRIGIDO: Garantia que req.body.negocio seja string
-// CORRIGIDO: Suporte a CNPJs alfanuméricos
-// CORRIGIDO: Busca por nome no banco local e no CSV
-// CORRIGIDO: Lógica de busca com 3 fontes (BrasilAPI -> ReceitaWS -> CSV)
-// CORRIGIDO: Indexação em memória do CSV para busca instantânea
-// CORRIGIDO: Extração de sócio majoritário e controladora
-// CORRIGIDO: Todas as strings com crases e sintaxe 100% verificada
-// CORRIGIDO: carregarCSVIndex com verificação de existência do arquivo (fs.existsSync)
-// CORRIGIDO: carregarCSVIndex não derruba o servidor em caso de erro
-// CORRIGIDO: baixarCSVdoStorage() ativada na inicialização
-// CORRIGIDO: Suporte a credenciais via variável de ambiente (GOOGLE_APPLICATION_CREDENTIALS_JSON)
-// CORRIGIDO: Caminho do Secret File atualizado para google-creds.json
-// CORRIGIDO: Erro de sintaxe na linha 291 (crases no console.log)
+// CORRIGIDO: Credencial via Secret File diretamente no código
+// CORRIGIDO: Remove dependência de variáveis de ambiente conflitantes
+// CORRIGIDO: Verificação de storage antes de baixar CSV
 // ============================================
 
 const express = require("express");
@@ -39,31 +17,45 @@ const crypto = require("crypto");
 require('dotenv').config();
 
 // ============================================================
-// CONFIGURA CREDENCIAIS DO GOOGLE CLOUD - APENAS SECRET FILE
+// CONFIGURA CREDENCIAIS DO GOOGLE CLOUD - DEFINITIVO
 // ============================================================
+// Não use variáveis de ambiente. Use o Secret File diretamente.
 const secretPath = '/etc/secrets/google-creds.json';
-let credenciaisCarregadas = false;
+let storage = null;
 
 if (fs.existsSync(secretPath)) {
-    process.env.GOOGLE_APPLICATION_CREDENTIALS = secretPath;
-    console.log('✅ Credenciais do Google Cloud carregadas do Secret File:', secretPath);
-    credenciaisCarregadas = true;
+    try {
+        const credsContent = fs.readFileSync(secretPath, 'utf8');
+        const creds = JSON.parse(credsContent);
+        
+        storage = new Storage({
+            projectId: creds.project_id,
+            credentials: {
+                client_email: creds.client_email,
+                private_key: creds.private_key
+            }
+        });
+        
+        console.log('✅ Storage inicializado com credenciais do Secret File.');
+        console.log('📁 Projeto:', creds.project_id);
+        console.log('📧 Conta de serviço:', creds.client_email);
+    } catch (err) {
+        console.error('❌ Erro ao processar credencial:', err.message);
+        console.error('❌ O Storage NÃO vai funcionar.');
+        storage = null;
+    }
 } else {
-    console.error('❌ CREDENCIAIS NÃO ENCONTRADAS! O arquivo', secretPath, 'não existe.');
-    console.error('❌ O sistema continuará rodando, mas o CSV não será baixado.');
-}
-
-if (!credenciaisCarregadas) {
-    console.warn('⚠️ Nenhuma credencial do Google Cloud encontrada. O Storage pode não funcionar.');
+    console.error('❌ Secret File NÃO ENCONTRADO em:', secretPath);
+    console.error('❌ O Storage NÃO vai funcionar.');
+    storage = null;
 }
 
 // Remove qualquer variável de ambiente que possa estar causando conflito
+delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
 delete process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
 delete process.env.GOOGLE_CREDENTIALS;
+delete process.env.GOOGLE_CREDENTIALS_JSON;
 
-if (!credenciaisCarregadas) {
-    console.warn('⚠️ Nenhuma credencial do Google Cloud encontrada. O Storage pode não funcionar.');
-}
 // ============================================
 // VERSÕES
 // ============================================
@@ -88,7 +80,11 @@ const app = express();
 // ============================================================
 // CORS - LIBERADO PARA TODAS AS ORIGENS
 // ============================================================
-app.use(cors());
+app.use(cors({
+    origin: "*",
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+}));
 app.use(express.json());
 
 // ============================================
@@ -118,7 +114,6 @@ const CSV_FILE = "cnpj_busca_6_colunas.csv";
 const HISTORICO_FILE = "analises/historico_cnpjs.json";
 const CONTADORES_FILE = "analises/contadores.json";
 const TENDENCIAS_FILE = "analises/tendencias.json";
-const storage = new Storage();
 
 // ============================================
 // ÍNDICE EM MEMÓRIA PARA O CSV
@@ -191,6 +186,11 @@ function encontrarCNPJPorNome(nome, uf) {
 // BAIXA O CSV DO GOOGLE CLOUD STORAGE
 // ============================================
 async function baixarCSVdoStorage() {
+    if (!storage) {
+        console.warn('⚠️ Storage não disponível. Pulando download do CSV.');
+        return false;
+    }
+    
     try {
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(CSV_FILE);
@@ -294,6 +294,10 @@ let historicoCarregado = false;
 async function carregarHistorico() {
     if (historicoCarregado) return;
     try {
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Histórico não carregado.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(HISTORICO_FILE);
         const [exists] = await file.exists();
@@ -307,6 +311,10 @@ async function carregarHistorico() {
 
 async function salvarHistorico() {
     try {
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Histórico não salvo.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(HISTORICO_FILE);
         await file.save(JSON.stringify(historicoCNPJs, null, 2), { contentType: "application/json" });
@@ -347,6 +355,10 @@ let contadoresCarregados = false;
 async function carregarContadores() {
     if (contadoresCarregados) return;
     try {
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Contadores não carregados.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(CONTADORES_FILE);
         const [exists] = await file.exists();
@@ -360,6 +372,10 @@ async function carregarContadores() {
 
 async function salvarContadores() {
     try {
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Contadores não salvos.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(CONTADORES_FILE);
         await file.save(JSON.stringify(contadores, null, 2), { contentType: "application/json" });
@@ -403,6 +419,10 @@ let tendenciasCarregadas = false;
 async function carregarTendencias() {
     if (tendenciasCarregadas) return;
     try {
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Tendências não carregadas.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(TENDENCIAS_FILE);
         const [exists] = await file.exists();
@@ -416,6 +436,10 @@ async function carregarTendencias() {
 
 async function salvarTendencias() {
     try {
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Tendências não salvas.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(TENDENCIAS_FILE);
         await file.save(JSON.stringify(tendencias, null, 2), { contentType: "application/json" });
@@ -1500,12 +1524,16 @@ const PORT = process.env.PORT || 3000;
 async function iniciarServidor() {
     console.log('🚀 Iniciando servidor VERI API...');
     
-    // 1. Tenta baixar o CSV do Storage
-    const baixou = await baixarCSVdoStorage();
-    if (baixou) {
-        console.log('📊 CSV disponível localmente.');
+    // 1. Tenta baixar o CSV do Storage (se o storage estiver disponível)
+    if (storage) {
+        const baixou = await baixarCSVdoStorage();
+        if (baixou) {
+            console.log('📊 CSV disponível localmente.');
+        } else {
+            console.warn('⚠️ CSV não disponível. Fallback para BrasilAPI e banco local ativo.');
+        }
     } else {
-        console.warn('⚠️ CSV não disponível. Fallback para BrasilAPI e banco local ativo.');
+        console.warn('⚠️ Storage não disponível. Pulando download do CSV.');
     }
     
     // 2. Tenta carregar o CSV em memória (se existir)
