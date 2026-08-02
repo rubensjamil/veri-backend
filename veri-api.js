@@ -11,7 +11,7 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
-const { Storage } = require("@google-cloud/storage");
+const Storage = null;
 const csv = require("csv-parser");
 const crypto = require("crypto");
 
@@ -20,42 +20,9 @@ require('dotenv').config();
 // ============================================================
 // CONFIGURA CREDENCIAIS DO GOOGLE CLOUD - DEFINITIVO
 // ============================================================
-const secretPath = '/etc/secrets/google-creds.json';
+// Storage desativado para teste
 let storage = null;
-
-if (fs.existsSync(secretPath)) {
-    try {
-        const credsContent = fs.readFileSync(secretPath, 'utf8');
-        const creds = JSON.parse(credsContent);
-        
-        storage = new Storage({
-            projectId: creds.project_id,
-            credentials: {
-                client_email: creds.client_email,
-                private_key: creds.private_key
-            }
-        });
-        
-        console.log('✅ Storage inicializado com credenciais do Secret File.');
-        console.log('📁 Projeto:', creds.project_id);
-        console.log('📧 Conta de serviço:', creds.client_email);
-    } catch (err) {
-        console.error('❌ Erro ao processar credencial:', err.message);
-        console.error('❌ O Storage NÃO vai funcionar.');
-        storage = null;
-    }
-} else {
-    console.error('❌ Secret File NÃO ENCONTRADO em:', secretPath);
-    console.error('❌ O Storage NÃO vai funcionar.');
-    storage = null;
-}
-
-// Remove variáveis conflitantes
-delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
-delete process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
-delete process.env.GOOGLE_CREDENTIALS;
-delete process.env.GOOGLE_CREDENTIALS_JSON;
-
+console.log('⚠️ Storage desativado. O CSV não será baixado.');
 // ============================================
 // VERSÕES
 // ============================================
