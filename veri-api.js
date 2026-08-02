@@ -4,6 +4,7 @@
 // CORRIGIDO: Credencial via Secret File diretamente no código
 // CORRIGIDO: Remove dependência de variáveis de ambiente conflitantes
 // CORRIGIDO: Verificação de storage antes de baixar CSV
+// CORRIGIDO: CSV não é baixado nem indexado no Render
 // ============================================
 
 const express = require("express");
@@ -19,7 +20,6 @@ require('dotenv').config();
 // ============================================================
 // CONFIGURA CREDENCIAIS DO GOOGLE CLOUD - DEFINITIVO
 // ============================================================
-// Não use variáveis de ambiente. Use o Secret File diretamente.
 const secretPath = '/etc/secrets/google-creds.json';
 let storage = null;
 
@@ -50,7 +50,7 @@ if (fs.existsSync(secretPath)) {
     storage = null;
 }
 
-// Remove qualquer variável de ambiente que possa estar causando conflito
+// Remove variáveis conflitantes
 delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
 delete process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
 delete process.env.GOOGLE_CREDENTIALS;
@@ -118,13 +118,13 @@ const TENDENCIAS_FILE = "analises/tendencias.json";
 // ============================================
 // ÍNDICE EM MEMÓRIA PARA O CSV
 // ============================================
-let csvIndexCNPJ = null;      // Map para busca por CNPJ
-let csvIndexNome = null;      // Map para busca por Nome
+let csvIndexCNPJ = null;
+let csvIndexNome = null;
 let csvIndexCarregado = false;
 const CSV_PATH = path.join(__dirname, 'dados-abertos-zip', 'cnpj_busca_6_colunas.csv');
 
 // ============================================================
-// NORMALIZAR CNPJ/CPF - SUPORTE A ALFANUMÉRICOS
+// NORMALIZAR CNPJ/CPF
 // ============================================================
 function normalizarCNPJ(doc) {
     if (!doc) return '';
@@ -217,7 +217,7 @@ async function baixarCSVdoStorage() {
 }
 
 // ============================================
-// CARREGA O CSV EM MEMÓRIA - CORRIGIDO
+// CARREGA O CSV EM MEMÓRIA
 // ============================================
 async function carregarCSVIndex() {
     if (csvIndexCarregado) return;
@@ -537,7 +537,7 @@ async function fetchComoNavegador(url, timeoutMs) {
 }
 
 // ============================================
-// BUSCA CNPJ NA BRASILAPI COM SÓCIOS (CORRIGIDO)
+// BUSCA CNPJ NA BRASILAPI COM SÓCIOS
 // ============================================
 async function buscarCNPJnaBrasilAPI(cnpj) {
     try {
@@ -655,7 +655,7 @@ async function buscarCNPJnaReceitaWS(cnpj) {
 }
 
 // ============================================
-// BUSCA CNPJ NO CSV (USANDO ÍNDICE EM MEMÓRIA)
+// BUSCA CNPJ NO CSV
 // ============================================
 async function buscarCNPJnoCSV(cnpj) {
     await carregarCSVIndex();
@@ -665,7 +665,7 @@ async function buscarCNPJnoCSV(cnpj) {
 }
 
 // ============================================
-// BUSCA CNPJ POR NOME NO CSV (USANDO ÍNDICE EM MEMÓRIA)
+// BUSCA CNPJ POR NOME NO CSV
 // ============================================
 async function buscarCNPJnoCSVPorNome(nome) {
     await carregarCSVIndex();
@@ -697,7 +697,7 @@ async function buscarCNPJnoCSVPorNome(nome) {
 }
 
 // ============================================
-// CADEIA DE BUSCA CNPJ - COM 3 FONTES
+// CADEIA DE BUSCA CNPJ
 // ============================================
 async function cadeiaDeBuscaCNPJ(entrada) {
     const limpo = normalizarCNPJ(entrada);
@@ -1018,7 +1018,7 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
 }
 
 // ============================================================
-// ROTA /enriquecer – CORRIGIDA
+// ROTA /enriquecer
 // ============================================================
 app.post("/enriquecer", async function(req, res) {
     const inicio = Date.now();
@@ -1040,31 +1040,19 @@ app.post("/enriquecer", async function(req, res) {
     const cnpjLimpo = normalizarCNPJ(cnpj);
 
     try {
-        // 1. CACHE
-        if (ENABLE_CACHE && cnpjLimpo && cacheMemoria.has(cnpjLimpo)) {
-            const cached = cacheMemoria.get(cnpjLimpo);
-            return res.json({
-                ...cached,
-                _cache: "memoria",
-                _tempo_ms: Date.now() - inicio
-            });
-        }
-
-        if (cnpjLimpo) {
+        // 1. CACHE - VERIFICAÇÃO SEGURA
+        if (ENABLE_CACHE && cnpjLimpo) {
             try {
-                const cacheFirestore = await getCache(cnpjLimpo);
-                if (cacheFirestore) {
-                    if (ENABLE_CACHE) {
-                        setCacheMemoria(cnpjLimpo, cacheFirestore);
-                    }
+                const cached = await getCache(cnpjLimpo);
+                if (cached && cached.dados && cached.dados.cnpj_encontrado) {
                     return res.json({
-                        ...cacheFirestore,
-                        _cache: "firestore",
+                        ...cached,
+                        _cache: "memoria",
                         _tempo_ms: Date.now() - inicio
                     });
                 }
             } catch (cacheErr) {
-                console.warn("Erro ao verificar cache Firestore:", cacheErr.message);
+                console.warn('Erro ao verificar cache:', cacheErr.message);
             }
         }
 
@@ -1102,16 +1090,12 @@ app.post("/enriquecer", async function(req, res) {
         }
 
         // ============================================================
-        // ORQUESTRADOR - CORRIGIDO (com UF)
+        // ORQUESTRADOR
         // ============================================================
         const modulo = req.body.modulo || "geral";
         const subModulo = req.body.subModulo || "geral";
 
-        // ============================================================
-        // EXTRAI UF DOS DADOS CADASTRAIS
-        // ============================================================
         var ufEmpresa = null;
-
         if (dadosCadastraisCompletos && dadosCadastraisCompletos.uf) {
             ufEmpresa = dadosCadastraisCompletos.uf;
         }
@@ -1127,30 +1111,12 @@ app.post("/enriquecer", async function(req, res) {
             }
         }
 
-        if (!ufEmpresa && dadosCadastraisCompletos && dadosCadastraisCompletos.cep) {
-            try {
-                const cepResponse = await fetch('https://viacep.com.br/ws/' + dadosCadastraisCompletos.cep + '/json/');
-                if (cepResponse.ok) {
-                    const cepData = await cepResponse.json();
-                    if (cepData && cepData.uf) {
-                        ufEmpresa = cepData.uf;
-                        console.log("UF obtida via CEP:", ufEmpresa);
-                    }
-                }
-            } catch (cepErr) {
-                console.warn("Erro ao buscar UF via CEP:", cepErr.message);
-            }
-        }
-
         if (ufEmpresa) {
             console.log("UF da empresa:", ufEmpresa);
         } else {
             console.warn("UF não encontrada. Buscas judiciais usarão fallback genérico.");
         }
 
-        // ============================================================
-        // CHAMA ORQUESTRADOR COM A UF
-        // ============================================================
         const dadosOrquestrador = await coletarEvidenciasReais(
             nome,
             cnpjLimpo,
@@ -1160,7 +1126,6 @@ app.post("/enriquecer", async function(req, res) {
             subModulo
         );
 
-        // Combina os dados cadastrais (prioridade: o que veio da BrasilAPI)
         const dadosCadastrais = {
             ...dadosOrquestrador.dados_cadastrais,
             ...dadosCadastraisCompletos,
@@ -1182,9 +1147,6 @@ app.post("/enriquecer", async function(req, res) {
             whatsapp_solicitante: whatsapp_solicitante || ""
         };
 
-        // ============================================================
-        // CORREÇÃO: FATURAMENTO ANUAL – PRIORIDADE DO ORQUESTRADOR
-        // ============================================================
         var faturamentoAnualEncontrado = null;
         var faturamentoFonte = "";
 
@@ -1210,9 +1172,6 @@ app.post("/enriquecer", async function(req, res) {
         dadosCadastrais.faturamento_anual = faturamentoAnualEncontrado;
         dadosCadastrais.faturamento_fonte = faturamentoFonte;
 
-        // ============================================================
-        // ADAPTADO: CAPTURA VALOR DO NEGÓCIO (Contratação/Compra/Venda)
-        // ============================================================
         var valorNegocio = 0;
         var parcelasNegocio = 1;
         var tipoPagamento = "avista";
@@ -1241,12 +1200,12 @@ app.post("/enriquecer", async function(req, res) {
         }
 
         // ============================================================
-        // 3. GEMINI (com fallback DeepSeek)
+        // GEMINI (com fallback DeepSeek)
         // ============================================================
         let estruturado = await estruturar(dadosOrquestrador.fontes, TIMEOUT_GEMINI_MS);
 
         // ============================================================
-        // 4. VALIDAÇÃO – GARANTE ESTRUTURA (NUNCA BLOQUEIA)
+        // VALIDAÇÃO
         // ============================================================
         console.log('📊 Validando estrutura recebida do Gemini...');
 
@@ -1333,9 +1292,6 @@ app.post("/enriquecer", async function(req, res) {
             faturamentoMensal = calcularFaturamentoMensalPorPorte(porteEmpresa);
         }
 
-        // ============================================================
-        // PREPARA DADOS PARA O MOTOR COM FATURAMENTO_ANUAL (CORRIGIDO)
-        // ============================================================
         const negocioStr = req.body.negocio ? String(req.body.negocio) : "";
 
         const dadosMotor = {
@@ -1376,7 +1332,6 @@ app.post("/enriquecer", async function(req, res) {
 
         const resultadoMotor = calcularRiscos(dadosMotor);
 
-        // 7. EVIDÊNCIAS – FALLBACK
         var evidenciasGemini = [];
         if (estruturado && estruturado.dados_estruturados) {
             secoes.forEach(function(secao) {
@@ -1418,7 +1373,6 @@ app.post("/enriquecer", async function(req, res) {
             evidenciasFinal = evidenciasFinal.concat(evidenciasFallback);
         }
 
-        // 8. MONTAGEM DA RESPOSTA
         const dadosCombinados = {
             ...estruturado,
             dados_estruturados: {
@@ -1494,13 +1448,10 @@ app.post("/enriquecer", async function(req, res) {
 
         // 9. CACHE
         if (cnpjLimpo) {
-            if (ENABLE_CACHE) {
-                setCacheMemoria(cnpjLimpo, response);
-            }
             try {
                 await setCache(cnpjLimpo, response);
             } catch (cacheErr) {
-                console.warn("Erro ao salvar cache:", cacheErr.message);
+                console.warn('Erro ao salvar cache:', cacheErr.message);
             }
         }
 
@@ -1519,9 +1470,6 @@ app.post("/enriquecer", async function(req, res) {
 // ============================================
 // INICIA O SERVIDOR
 // ============================================
-// ============================================
-// INICIA O SERVIDOR
-// ============================================
 const PORT = process.env.PORT || 3000;
 
 async function iniciarServidor() {
@@ -1536,7 +1484,6 @@ async function iniciarServidor() {
     console.log('☁️ Render NÃO fará download nem indexação dos 68 milhões de registros.');
     console.log('✅ BrasilAPI + banco local + demais fontes permanecem ativos.');
     
-    // 3. Sobe o servidor
     const server = app.listen(PORT, '0.0.0.0', function() {
         console.log("✅ VERI API v" + VERSAO_API + " rodando na porta " + PORT);
         console.log("⚙️ Motor VERI integrado à rota /enriquecer");
@@ -1553,6 +1500,6 @@ async function iniciarServidor() {
     });
 }
 
-// Inicia o servidor
 iniciarServidor();
+
 module.exports = app;

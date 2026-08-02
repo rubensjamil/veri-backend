@@ -1,20 +1,11 @@
 // ============================================================
 // veri.engine.js - Motor VERI (único e soberano)
 // 10 fatores de risco - PESOS E METODOLOGIA
-// CORRIGIDO: ticket para compra usa SOLICITANTE, venda usa ANALISADO
-// CORRIGIDO: topRiscos sempre inclui FINANCEIRO + 3 maiores
-// CORRIGIDO: percentual de comprometimento usa faturamento REAL
-// CORRIGIDO: RISCO ENTRE AS PARTES com fallback inteligente
-// ADAPTADO: Valor da Contratação/Compra/Venda
-// CORRIGIDO: Percentual de comprometimento para PF usa renda mensal
 // ============================================================
 
 const config = require('../../motor.config.js');
 const metodologia = require('../../motor.metodologia.js');
 
-// ============================================
-// MAPEAMENTO DE PORTAS (INTERNO)
-// ============================================
 const DESCRICAO_PORTAS = {
     'empresa_fornecedor': 'Fornecedor',
     'empresa_loja': 'Loja',
@@ -30,17 +21,13 @@ const DESCRICAO_PORTAS = {
     'lotes_unico': 'Lotes'
 };
 
-// ============================================
-// FUNÇÕES DE CÁLCULO POR FATOR
-// ============================================
-
 function calcularFinanceiro(dados) {
     const { analisado, solicitante, negocio, relacionamento } = dados;
     const valorNegocio = negocio.valor || 0;
     const parcelas = negocio.parcelas || 1;
     const valorParcela = valorNegocio / parcelas;
 
-    const negocioStr = typeof dados.negocio === 'string'? dados.negocio: String(dados.negocio?.tipo ||dados.negocio?.negocio || '');
+    const negocioStr = typeof dados.negocio === 'string' ? dados.negocio : String((dados.negocio && dados.negocio.tipo) || (dados.negocio && dados.negocio.negocio) || '');
 
     const isCompra = negocioStr.startsWith('comprar') || negocioStr.startsWith('contratar');
     const isVenda = negocioStr.startsWith('vender');
@@ -128,10 +115,6 @@ function calcularFinanceiro(dados) {
         fonte: fonte
     };
 }
-
-// ============================================
-// DEMAIS FUNÇÕES (MANTIDAS)
-// ============================================
 
 function calcularDescontinuidade(dados) {
     const { analisado } = dados;
@@ -265,10 +248,6 @@ function calcularRelacional(dados) {
     };
 }
 
-// ============================================
-// FUNÇÕES AUXILIARES
-// ============================================
-
 function calcularTicketDiario(porte) {
     const anual = config.FATURAMENTO_ANUAL[porte] || 0;
     return anual ? Math.round(anual / 12 / 30) : 0;
@@ -286,10 +265,6 @@ function getNivelRisco(contrib) {
     if (contrib >= niveis.MEDIO) return 'MEDIO';
     return 'BAIXO';
 }
-
-// ============================================
-// FUNÇÃO PRINCIPAL: calcularRiscos
-// ============================================
 
 function calcularRiscos(dados) {
     const situacaoRaw = (dados.analisado && dados.analisado.situacao) ? dados.analisado.situacao.toUpperCase() : 'ATIVA';
@@ -368,33 +343,28 @@ function calcularRiscos(dados) {
     const deterioracaoResult = calcularDeterioracao(dados);
     const relacionalResult = calcularRelacional(dados);
 
-    // ============================================================
-    // CORREÇÃO: PERCENTUAL DE COMPROMETIMENTO com faturamento REAL
-    // ============================================================
     var percentualComprometimento = 0;
     var valorNegocio = dados.negocio.valor || 0;
     var parcelas = dados.negocio.parcelas || 1;
     var valorParcela = (parcelas > 0) ? valorNegocio / parcelas : valorNegocio;
 
     var negocioStr = typeof dados.negocio === 'string'
-    ? dados.negocio
-    : String(dados.negocio?.tipo || dados.negocio?.negocio || '');
+        ? dados.negocio
+        : String((dados.negocio && dados.negocio.tipo) || (dados.negocio && dados.negocio.negocio) || '');
 
     var isCompra = negocioStr.startsWith('comprar') || negocioStr.startsWith('contratar');
     var isVenda = negocioStr.startsWith('vender');
 
     var ticketDiario = 0;
-    // Para compra: base é o solicitante
     if (isCompra) {
         if (dados.solicitante.tipo === 'pessoa' && dados.solicitante.renda) {
-            ticketDiario = dados.solicitante.renda / 30; // renda mensal / 30
+            ticketDiario = dados.solicitante.renda / 30;
         } else if (dados.solicitante.tipo === 'empresa' && dados.solicitante.faturamento_anual) {
             ticketDiario = dados.solicitante.faturamento_anual / 12 / 30;
         } else {
             ticketDiario = financeiroResult.ticket_estimado || 0;
         }
     } else if (isVenda) {
-        // Para venda: base é o analisado
         if (dados.analisado.tipo === 'pessoa' && dados.analisado.renda) {
             ticketDiario = dados.analisado.renda / 30;
         } else if (dados.analisado.tipo === 'empresa' && dados.analisado.faturamento_anual) {
@@ -451,9 +421,6 @@ function calcularRiscos(dados) {
         recomendacao = 'ATENCAO';
     }
 
-    // ============================================================
-    // TOP RISCOS: FINANCEIRO SEMPRE + 3 MAIORES DOS DEMAIS
-    // ============================================================
     var financeiroObj = null;
     var demaisRiscos = [];
 
@@ -501,7 +468,7 @@ function calcularRiscos(dados) {
         score_global: scoreGlobal,
         recuperabilidade: recuperabilidade,
         recomendacao: recomendacao,
-        risco_principal: topRiscos[0]?.risco || 'FINANCEIRO',
+        risco_principal: (topRiscos[0] && topRiscos[0].risco) || 'FINANCEIRO',
         riscos: riscos,
         top_riscos: topRiscos,
         tipo_analise: tipoAnalise,

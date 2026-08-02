@@ -1,24 +1,12 @@
 // ============================================================
 // gemini.client.js - Cliente Gemini com fallback para DeepSeek
 // VERSÃO DEFINITIVA - CONSOLIDADA
-// - Prompt com schema completo e obrigatório
-// - extrairJSON() com contagem de chaves (CORRIGIDO)
-// - parseSeguro() com limpeza de caracteres invisíveis
-// - Redução do prompt para evitar truncamento
-// - maxOutputTokens: 4096
-// - Log da resposta completa em caso de erro
-// - Gemini e DeepSeek com o mesmo schema
-// - MODELOS: apenas gemini-flash-latest (removeu os que dão 404)
-// - LOGS: adicionados para diagnóstico do fluxo
 // ============================================================
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { HarmCategory, HarmBlockThreshold } = require("@google/generative-ai");
 const axios = require('axios');
 
-// ============================================================
-// MODELOS DISPONIVEIS NO PROJETO
-// ============================================================
 const MODELOS_GEMINI = [
     'gemini-flash-latest'
 ];
@@ -27,9 +15,6 @@ const VERSAO_PROMPT = 'v11';
 const VERSAO_SCHEMA = '1.5';
 const TIMEOUT_MS = 45000;
 
-// ============================================================
-// PROMPT DE EVIDÊNCIAS - COM SCHEMA OBRIGATÓRIO
-// ============================================================
 const PROMPT_EVIDENCIAS = `
 Extraia evidencias relevantes das fontes fornecidas, não busque indefinidamente evidencias, a medida que for encontrando vá entregando sendo no minimo uma e no máximo 3 evidencias, priorize eviencias de fraudes, investigação policial e de investimentos e evidencias de crescimento, melhorias e, ou deterioração de imagem da analisada.
 
@@ -52,14 +37,10 @@ Retorne APENAS JSON no formato:
 Nenhum texto antes ou depois. Apenas JSON.
 `;
 
-// ============================================================
-// FUNÇÃO: extrairJSON - com contagem de chaves (CORRIGIDO)
-// ============================================================
 function extrairJSON(texto) {
     if (!texto) return null;
     texto = texto.trim();
 
-    // Remove markdown se existir (json ... )
     if (texto.startsWith("json")) {
         texto = texto.replace(/^json\s*/, "");
         texto = texto.replace(/\s*$/, "");
@@ -70,7 +51,6 @@ function extrairJSON(texto) {
         texto = texto.trim();
     }
 
-    // Encontra o primeiro { e o último } com contagem de chaves
     let inicio = -1;
     let fim = -1;
     let contador = 0;
@@ -96,17 +76,13 @@ function extrairJSON(texto) {
     return texto.substring(inicio, fim + 1);
 }
 
-// ============================================================
-// FUNÇÃO: parseSeguro - com limpeza completa
-// ============================================================
 function parseSeguro(texto) {
     if (!texto || typeof texto !== 'string') return null;
 
-    // Limpeza de caracteres invisíveis e BOM
     let limpo = texto
-        .replace(/^\uFEFF/, '') // BOM
-        .replace(/[\u2018\u2019]/g, "'") // aspas inteligentes
-        .replace(/[\u201C\u201D]/g, '"') // aspas duplas inteligentes
+        .replace(/^\uFEFF/, '')
+        .replace(/[\u2018\u2019]/g, "'")
+        .replace(/[\u201C\u201D]/g, '"')
         .replace(/[\r\n]+/g, ' ')
         .trim();
 
@@ -115,7 +91,6 @@ function parseSeguro(texto) {
     } catch (e) {
         console.warn("Erro no JSON.parse (primeira tentativa):", e.message);
 
-        // Tenta extrair apenas o JSON
         const extraido = extrairJSON(limpo);
         if (extraido) {
             try {
@@ -125,7 +100,6 @@ function parseSeguro(texto) {
             }
         }
 
-        // Remove vírgulas extras
         limpo = limpo.replace(/,\s*}/g, '}');
         limpo = limpo.replace(/,\s*]/g, ']');
 
@@ -138,15 +112,11 @@ function parseSeguro(texto) {
     }
 }
 
-// ============================================================
-// FUNÇÃO: garantir estrutura mínima
-// ============================================================
 function garantirEstruturaMinima(dados) {
     if (!dados || typeof dados !== 'object') {
         return criarEstruturaVazia('Dados nulos');
     }
 
-    // Garante campos obrigatórios
     if (!dados.dados_estruturados) {
         dados.dados_estruturados = {
             reputacional: {},
@@ -164,12 +134,10 @@ function garantirEstruturaMinima(dados) {
         }
     }
 
-    // Garante arrays (nunca null)
     dados.evidencias = dados.evidencias || [];
     dados.padroes_risco = dados.padroes_risco || [];
     dados.fontes_consultadas = dados.fontes_consultadas || [];
 
-    // Limita a 3 evidências
     if (dados.evidencias.length > 3) {
         dados.evidencias = dados.evidencias.slice(0, 3);
     }
@@ -186,9 +154,6 @@ function garantirEstruturaMinima(dados) {
     return dados;
 }
 
-// ============================================================
-// FUNÇÃO: criar estrutura vazia
-// ============================================================
 function criarEstruturaVazia(motivo) {
     return {
         status_busca: 'falha',
@@ -216,20 +181,16 @@ function criarEstruturaVazia(motivo) {
     };
 }
 
-// ============================================================
-// FUNCAO PRINCIPAL: estruturar
-// ============================================================
 async function estruturar(fontes, timeoutMs) {
     const timeout = timeoutMs || TIMEOUT_MS;
 
-    // LOG: ver o que está chegando no Gemini
     console.log('📊 ORQUESTRADOR -> GEMINI: Fontes recebidas');
-    console.log('📊 google_search:', fontes.google_search?.length || 0);
-    console.log('📊 noticias:', fontes.noticias?.length || 0);
-    console.log('📊 processos_judiciais:', fontes.processos_judiciais?.length || 0);
-    console.log('📊 reclame_aqui:', fontes.reclame_aqui?.length || 0);
-    console.log('📊 consumidor_gov:', fontes.consumidor_gov?.length || 0);
-    console.log('📊 protestos:', fontes.protestos?.length || 0);
+    console.log('📊 google_search:', fontes.google_search ? fontes.google_search.length : 0);
+    console.log('📊 noticias:', fontes.noticias ? fontes.noticias.length : 0);
+    console.log('📊 processos_judiciais:', fontes.processos_judiciais ? fontes.processos_judiciais.length : 0);
+    console.log('📊 reclame_aqui:', fontes.reclame_aqui ? fontes.reclame_aqui.length : 0);
+    console.log('📊 consumidor_gov:', fontes.consumidor_gov ? fontes.consumidor_gov.length : 0);
+    console.log('📊 protestos:', fontes.protestos ? fontes.protestos.length : 0);
 
     if (!fontes || Object.keys(fontes).length === 0) {
         console.warn('Nenhuma fonte fornecida para o Gemini.');
@@ -266,9 +227,6 @@ async function estruturar(fontes, timeoutMs) {
     return criarEstruturaVazia('Falha em todos os provedores');
 }
 
-// ============================================================
-// FUNCAO: tentar Gemini
-// ============================================================
 async function tentarGemini(modelo, dados, timeoutMs) {
     const apiKey = process.env.GOOGLE_API_KEY;
     if (!apiKey) {
@@ -314,11 +272,8 @@ async function tentarGemini(modelo, dados, timeoutMs) {
         }
 
         console.log("📊 Resposta Gemini:", responseText.length, "caracteres");
-
-        // Log da resposta bruta (primeiros 500 caracteres)
         console.log("📊 Resposta Gemini (bruta):", responseText.substring(0, 500));
 
-        // Log da resposta completa em caso de erro
         const jsonStr = extrairJSON(responseText);
         if (!jsonStr) {
             console.warn('Nenhum JSON encontrado na resposta.');
@@ -335,7 +290,6 @@ async function tentarGemini(modelo, dados, timeoutMs) {
             return null;
         }
 
-        // Garante estrutura mínima
         parsed.evidencias = parsed.evidencias || [];
         parsed.padroes_risco = parsed.padroes_risco || [];
         parsed.fontes_consultadas = parsed.fontes_consultadas || [];
@@ -355,9 +309,6 @@ async function tentarGemini(modelo, dados, timeoutMs) {
     }
 }
 
-// ============================================================
-// FUNCAO: tentar DeepSeek (fallback) - MESMO SCHEMA DO GEMINI
-// ============================================================
 async function tentarDeepSeek(dados, timeoutMs) {
     const apiKey = process.env.DEEPSEEK_API_KEY;
     if (!apiKey) {
@@ -411,7 +362,6 @@ async function tentarDeepSeek(dados, timeoutMs) {
             return null;
         }
 
-        // Garante estrutura mínima (mesmo schema do Gemini)
         parsed.evidencias = parsed.evidencias || [];
         parsed.padroes_risco = parsed.padroes_risco || [];
         parsed.fontes_consultadas = parsed.fontes_consultadas || [];
@@ -426,14 +376,9 @@ async function tentarDeepSeek(dados, timeoutMs) {
     }
 }
 
-// ============================================================
-// FUNCOES AUXILIARES - PREPARAR DADOS PARA PROMPT (REDUZIDO)
-// ============================================================
-
 function prepararDadosParaPrompt(fontes) {
     const dados = {};
 
-    // REDUZIDO: 3 notícias, 3 processos, 2 reclamações, 2 protestos, 2 consumidor
     if (fontes.google_search && fontes.google_search.length > 0) {
         dados.google_search = fontes.google_search.slice(0, 3).map(function(item) {
             return {

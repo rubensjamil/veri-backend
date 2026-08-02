@@ -1,19 +1,7 @@
+// ============================================================
 // orchestrator.js - Orquestra fontes de dados REAIS para a VERI
 // VERSÃO DEFINITIVA 4.0.11 - CORREÇÃO DE SINTAXE
-// - CORREÇÃO: funções async com corpo vazio substituídas por return null
-// - CORREÇÃO: normalização de CNPJ/CPF
-// - CORREÇÃO: delay e fallback para BrasilAPI (2 tentativas)
-// - CORREÇÃO: fallback para ReceitaWS e Google Search
-// - CORREÇÃO: faturamento_anual garantido no retorno
-// - CORREÇÃO: busca por nome prioriza banco local
-// - CORREÇÃO: try/catch no carregamento do cnpjs_famosos.json
-// - CORREÇÃO: funções de histórico vazias para não quebrar
-// - CORREÇÃO: executarBuscas com entrega na hora (não espera todas as fontes)
-// - CORREÇÃO: removidos operadores ?. (optional chaining) para compatibilidade
-// - CORREÇÃO: erro de sintaxe na linha 614 (parêntese extra)
-// - CORREÇÃO: erro de sintaxe nas funções async vazias
-// - SEM CARACTERES ESPECIAIS
-// ============================================================================
+// ============================================================
 
 const { googleSearch } = require('./sources/googleSearch');
 const { buscarReclameAqui } = require('./sources/reclameAqui');
@@ -23,17 +11,11 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 
-// ============================================================
-// NORMALIZAR CNPJ/CPF (APENAS NÚMEROS)
-// ============================================================
 function normalizarDocumento(doc) {
     if (!doc) return '';
     return doc.replace(/\D/g, '');
 }
 
-// ============================================================
-// HISTÓRICO (FUNÇÕES VAZIAS PARA NÃO QUEBRAR) - CORRIGIDO
-// ============================================================
 async function carregarHistorico() {
     return null;
 }
@@ -42,9 +24,6 @@ async function salvarNoHistorico(cnpj, dados) {
     return null;
 }
 
-// ============================================================
-// BANCO DE DADOS LOCAL DE CNPJs FAMOSOS (NA MESMA PASTA)
-// ============================================================
 let CNPJS_FAMOSOS = {};
 try {
     CNPJS_FAMOSOS = JSON.parse(fs.readFileSync(path.join(__dirname, 'cnpjs_famosos.json'), 'utf8'));
@@ -66,9 +45,6 @@ const FONTES_UTILIZADAS = [
     'Banco local de CNPJs famosos'
 ];
 
-// ============================================================
-// TIMEOUTS OTIMIZADOS PARA ENTREGA RÁPIDA
-// ============================================================
 const TIMEOUTS = {
     GOOGLE_SEARCH: 2000,
     NOTICIAS: 2000,
@@ -80,10 +56,6 @@ const TIMEOUTS = {
     CNPJ_BRASILAPI: 3000,
     CNPJ_GOOGLE: 2000
 };
-
-// ============================================================
-// DEFESA CONTRA LOOPING E VAZAMENTO DE RECURSOS
-// ============================================================
 
 function withTimeout(promise, ms) {
     return Promise.race([
@@ -104,9 +76,6 @@ function criarAbortController(ms) {
     return { signal: controller.signal, timeoutId: timeoutId };
 }
 
-// ============================================================
-// MAPEAMENTO DE TRF POR UF (Unidade Federativa)
-// ============================================================
 function obterTRFPorUF(uf) {
     if (!uf) return 'trf1.jus.br';
     var ufUpper = uf.toUpperCase().trim();
@@ -128,9 +97,6 @@ function obterTRFPorUF(uf) {
     return mapeamento[ufUpper] || 'trf1.jus.br';
 }
 
-// ============================================================
-// GERAR QUERIES COM BASE NO PORTE E UF
-// ============================================================
 function gerarQueries(nome, cnpj, cpf, uf, porte) {
     var nomeLimpo = nome || '';
     var ufLower = uf ? uf.toLowerCase().trim() : '';
@@ -174,9 +140,6 @@ function gerarQueries(nome, cnpj, cpf, uf, porte) {
     };
 }
 
-// ============================================================
-// BANCO LOCAL DE CNPJs FAMOSOS (ORGANIZADO POR UF)
-// ============================================================
 function encontrarCNPJPorNome(nome, uf) {
     if (!nome || typeof nome !== 'string') return null;
     if (Object.keys(CNPJS_FAMOSOS).length === 0) return null;
@@ -210,9 +173,6 @@ function encontrarCNPJPorNome(nome, uf) {
     return null;
 }
 
-// ============================================================
-// BUSCA CNPJ POR NOME (OTIMIZADA: apenas Google)
-// ============================================================
 async function buscarCNPJPorNome(nome) {
     if (!nome) return null;
 
@@ -240,9 +200,6 @@ async function buscarCNPJPorNome(nome) {
     return null;
 }
 
-// ============================================================
-// BUSCA CPF POR NOME
-// ============================================================
 async function buscarCPFPorNome(nome) {
     if (!nome) return null;
     try {
@@ -260,9 +217,6 @@ async function buscarCPFPorNome(nome) {
     return null;
 }
 
-// ============================================================
-// GOOGLE SEARCH COM ABORT CONTROLLER
-// ============================================================
 async function buscarGoogleComAbort(query, timeoutMs) {
     var abort = criarAbortController(timeoutMs || TIMEOUTS.GOOGLE_SEARCH);
     try {
@@ -278,9 +232,6 @@ async function buscarGoogleComAbort(query, timeoutMs) {
     }
 }
 
-// ============================================================
-// BUSCA PROTESTOS
-// ============================================================
 async function buscarProtestos(queries) {
     var resultados = [];
     try {
@@ -307,9 +258,6 @@ async function buscarProtestos(queries) {
     return resultados.slice(0, 10);
 }
 
-// ============================================================
-// IDENTIFICAR TRIBUNAL PELO LINK
-// ============================================================
 function identificarTribunal(link) {
     if (!link) return 'Processos Judiciais';
     if (link.indexOf('stf.jus.br') !== -1) return 'STF';
@@ -330,9 +278,6 @@ function identificarTribunal(link) {
     return 'Processos Judiciais';
 }
 
-// ============================================================
-// BUSCA PROCESSOS JUDICIAIS OTIMIZADA (COM FALLBACK)
-// ============================================================
 async function buscarProcessosJudiciaisOtimizados(queriesJudiciais, nome) {
     var resultados = [];
 
@@ -410,9 +355,6 @@ async function buscarProcessosJudiciaisOtimizados(queriesJudiciais, nome) {
     return unicos.slice(0, 15);
 }
 
-// ============================================================
-// BUSCA SITE OFICIAL (COM FALLBACK)
-// ============================================================
 async function buscarSiteOficial(nome) {
     if (!nome) return null;
     var siteEncontrado = null;
@@ -465,9 +407,6 @@ async function buscarSiteOficial(nome) {
     return null;
 }
 
-// ============================================================
-// FALLBACKS: RECLAME AQUI E CONSUMIDOR.GOV
-// ============================================================
 async function buscarReclameFallback(query) {
     try {
         var results = await buscarGoogleComAbort(query, TIMEOUTS.RECLAME_AQUI);
@@ -504,9 +443,6 @@ async function buscarConsumidorFallback(query) {
     return [];
 }
 
-// ============================================================
-// RESOLUÇÃO DE FALLBACK SEQUENCIAL SEM LOOPING
-// ============================================================
 async function obterDadosReclameAqui(nome, queryFallback) {
     if (!process.env.RECLAME_AQUI_API_KEY) {
         return await buscarReclameFallback(queryFallback);
@@ -556,15 +492,12 @@ async function obterDadosConsumidorGov(nome, queryFallback) {
     return await buscarConsumidorFallback(queryFallback);
 }
 
-// ============================================================
-// EXECUTA BUSCAS POR PRIORIDADE - ENTREGA NA HORA
-// ============================================================
 async function executarBuscas(queries, nome) {
     const TEMPO_MAXIMO = 45000;
     const inicio = Date.now();
     
-    let google = null;
-    let noticias = null;
+    let google = [];
+    let noticias = [];
     let processos = null;
     let reclameData = null;
     let consumidorData = null;
@@ -590,8 +523,7 @@ async function executarBuscas(queries, nome) {
         noticias = [];
     }
     
-    // Usa verificação manual para compatibilidade (sem ?.)
-    const totalEvidencias = ((google && google.length) || 0) + ((noticias && noticias.length) || 0);
+    const totalEvidencias = (google ? google.length : 0) + (noticias ? noticias.length : 0);
     if (totalEvidencias >= 3) {
         console.log('✅ Já temos 3+ evidências. Entregando sem esperar as demais fontes...');
         return { google, noticias, processos, reclameData, consumidorData, protestos };
@@ -609,8 +541,12 @@ async function executarBuscas(queries, nome) {
             withTimeout(obterDadosConsumidorGov(nome, queries.consumidorFallback), TIMEOUTS.CONSUMIDOR_GOV),
             withTimeout(buscarProtestos(queries.protestos), TIMEOUTS.PROTESTOS),
         ]),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT_COMPLEMENTARES')), 15000))
-    ]).catch(() => {
+        new Promise(function(_, reject) {
+            setTimeout(function() {
+                reject(new Error('TIMEOUT_COMPLEMENTARES'));
+            }, 15000);
+        })
+    ]).catch(function() {
         return [
             { status: 'fulfilled', value: null },
             { status: 'fulfilled', value: null },
@@ -619,7 +555,6 @@ async function executarBuscas(queries, nome) {
         ];
     });
     
-    // Usa verificação manual para compatibilidade (sem ?.)
     processos = (complementares[0] && complementares[0].status === 'fulfilled') ? complementares[0].value : null;
     reclameData = (complementares[1] && complementares[1].status === 'fulfilled') ? complementares[1].value : null;
     consumidorData = (complementares[2] && complementares[2].status === 'fulfilled') ? complementares[2].value : null;
@@ -632,9 +567,6 @@ async function executarBuscas(queries, nome) {
     return { google, noticias, processos, reclameData, consumidorData, protestos };
 }
 
-// ============================================================
-// BUSCA CNPJ NA BRASILAPI COM FALLBACK (2 TENTATIVAS)
-// ============================================================
 async function buscarCNPJnaBrasilAPI(cnpj, tentativa) {
     var tentativaAtual = tentativa || 1;
     var maxTentativas = 2;
@@ -681,9 +613,6 @@ async function buscarCNPJnaBrasilAPI(cnpj, tentativa) {
     return null;
 }
 
-// ============================================================
-// BUSCA CNPJ NA RECEITAWS (FALLBACK)
-// ============================================================
 async function buscarCNPJnaReceitaWS(cnpj) {
     var cnpjLimpo = normalizarDocumento(cnpj);
     console.log('🔍 Buscando ReceitaWS para CNPJ: ' + cnpjLimpo);
@@ -717,9 +646,6 @@ async function buscarCNPJnaReceitaWS(cnpj) {
     return null;
 }
 
-// ============================================================
-// CADEIA DE BUSCA CNPJ (COM FALLBACKS)
-// ============================================================
 async function cadeiaDeBuscaCNPJ(limpo) {
     var cnpjNormalizado = normalizarDocumento(limpo);
     console.log('🔍 Iniciando cadeia de busca para CNPJ: ' + cnpjNormalizado);
@@ -741,9 +667,6 @@ async function cadeiaDeBuscaCNPJ(limpo) {
     return null;
 }
 
-// ============================================================
-// FUNÇÃO PRINCIPAL: COLETA EVIDÊNCIAS
-// ============================================================
 async function coletarEvidenciasReais(nome, cnpj, cpf, uf, modulo, subModulo) {
     var inicio = Date.now();
 
@@ -792,7 +715,7 @@ async function coletarEvidenciasReais(nome, cnpj, cpf, uf, modulo, subModulo) {
         }
     }
 
-    if (cnpjEncontrado && (!dadosCadastrais || dadosCadastrais.fonte_cnpj === 'banco_local')) {
+    if (cnpjEncontrado && (!dadosCadastrais || (dadosCadastrais && dadosCadastrais.fonte_cnpj === 'banco_local'))) {
         var dadosCadastraisCompletos = await consultarReceita(cnpjEncontrado);
         if (dadosCadastraisCompletos) {
             if (faturamentoDoBanco) {
