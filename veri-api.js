@@ -1519,30 +1519,22 @@ app.post("/enriquecer", async function(req, res) {
 // ============================================
 // INICIA O SERVIDOR
 // ============================================
+// ============================================
+// INICIA O SERVIDOR
+// ============================================
 const PORT = process.env.PORT || 3000;
 
 async function iniciarServidor() {
     console.log('🚀 Iniciando servidor VERI API...');
     
-    // 1. Tenta baixar o CSV do Storage (se o storage estiver disponível)
-    if (storage) {
-        const baixou = await baixarCSVdoStorage();
-        if (baixou) {
-            console.log('📊 CSV disponível localmente.');
-        } else {
-            console.warn('⚠️ CSV não disponível. Fallback para BrasilAPI e banco local ativo.');
-        }
-    } else {
-        console.warn('⚠️ Storage não disponível. Pulando download do CSV.');
-    }
-    
-    // 2. Tenta carregar o CSV em memória (se existir)
-    try {
-        await carregarCSVIndex();
-    } catch (err) {
-        console.warn('⚠️ Erro ao carregar CSV na inicialização:', err.message);
-        console.warn('⚠️ O servidor continuará rodando sem o índice CSV.');
-    }
+    // ============================================================
+    // CSV NO GOOGLE CLOUD STORAGE
+    // NÃO baixar nem indexar os 68 milhões de registros no Render.
+    // O arquivo permanece no Google Cloud.
+    // ============================================================
+    console.log('☁️ CSV permanece no Google Cloud Storage.');
+    console.log('☁️ Render NÃO fará download nem indexação dos 68 milhões de registros.');
+    console.log('✅ BrasilAPI + banco local + demais fontes permanecem ativos.');
     
     // 3. Sobe o servidor
     const server = app.listen(PORT, '0.0.0.0', function() {
@@ -1550,7 +1542,7 @@ async function iniciarServidor() {
         console.log("⚙️ Motor VERI integrado à rota /enriquecer");
         console.log("📊 Busca BrasilAPI ativada para porte e data_abertura");
         console.log('🚀 REVISÃO CORRIGIDA - JSON_INVALIDO RESOLVIDO');
-        console.log('📊 CSV indexado: ' + (csvIndexCarregado ? '✅ SIM (busca por nome ativa)' : '⚠️ NÃO (fallback ativo)'));
+        console.log('📊 CSV indexado: ⚠️ NÃO (fallback ativo - BrasilAPI + banco local)');
     });
 
     server.on('error', function(err) {
@@ -1563,5 +1555,4 @@ async function iniciarServidor() {
 
 // Inicia o servidor
 iniciarServidor();
-
 module.exports = app;
