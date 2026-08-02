@@ -1,28 +1,17 @@
 // ============================================
 // VERI API - Motor Transversal v3.2
-// Versão completa com todas as rotas
-// CORRIGIDO: Credencial via Secret File diretamente no código
-// CORRIGIDO: Remove dependência de variáveis de ambiente conflitantes
-// CORRIGIDO: Verificação de storage antes de baixar CSV
-// CORRIGIDO: CSV não é baixado nem indexado no Render
+// Versão limpa - SEM STORAGE, SEM CREDENCIAIS
 // ============================================
 
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
-const Storage = null;
 const csv = require("csv-parser");
 const crypto = require("crypto");
 
 require('dotenv').config();
 
-// ============================================================
-// CONFIGURA CREDENCIAIS DO GOOGLE CLOUD - DEFINITIVO
-// ============================================================
-// Storage desativado para teste
-let storage = null;
-console.log('⚠️ Storage desativado. O CSV não será baixado.');
 // ============================================
 // VERSÕES
 // ============================================
@@ -45,7 +34,7 @@ const config = require("./motor.config");
 const app = express();
 
 // ============================================================
-// CORS - LIBERADO PARA TODAS AS ORIGENS
+// CORS
 // ============================================================
 app.use(cors({
     origin: "*",
@@ -74,16 +63,12 @@ function setCacheMemoria(key, value) {
 }
 
 // ============================================
-// STORAGE E FUNÇÕES LEGADAS
+// STORAGE DESATIVADO
 // ============================================
-const BUCKET_NAME = "veri-cnpj-dados";
-const CSV_FILE = "cnpj_busca_6_colunas.csv";
-const HISTORICO_FILE = "analises/historico_cnpjs.json";
-const CONTADORES_FILE = "analises/contadores.json";
-const TENDENCIAS_FILE = "analises/tendencias.json";
+console.log('⚠️ Storage desativado. O CSV não será baixado.');
 
 // ============================================
-// ÍNDICE EM MEMÓRIA PARA O CSV
+// ÍNDICE EM MEMÓRIA PARA O CSV (DESATIVADO)
 // ============================================
 let csvIndexCNPJ = null;
 let csvIndexNome = null;
@@ -133,7 +118,6 @@ function encontrarCNPJPorNome(nome, uf) {
             if (empresa.cnpj === 'PESQUISAR') continue;
             var nomeEmpresa = empresa.nome.toLowerCase().trim();
             if (nomeEmpresa.indexOf(nomeBusca) !== -1 || nomeBusca.indexOf(nomeEmpresa) !== -1) {
-                console.log('✅ Encontrado no banco local: ' + empresa.nome + ' CNPJ: ' + empresa.cnpj + ' UF: ' + ufKey);
                 return {
                     cnpj: empresa.cnpj,
                     faturamento_anual: empresa.faturamento_anual,
@@ -150,58 +134,20 @@ function encontrarCNPJPorNome(nome, uf) {
 }
 
 // ============================================
-// BAIXA O CSV DO GOOGLE CLOUD STORAGE
-// ============================================
-async function baixarCSVdoStorage() {
-    if (!storage) {
-        console.warn('⚠️ Storage não disponível. Pulando download do CSV.');
-        return false;
-    }
-    
-    try {
-        const bucket = storage.bucket(BUCKET_NAME);
-        const file = bucket.file(CSV_FILE);
-        const [exists] = await file.exists();
-        
-        if (!exists) {
-            console.warn('⚠️ CSV não encontrado no Storage:', CSV_FILE);
-            return false;
-        }
-        
-        const dir = path.dirname(CSV_PATH);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
-        
-        console.log('📥 Baixando CSV do Google Cloud Storage...');
-        await file.download({ destination: CSV_PATH });
-        console.log('✅ CSV baixado do Google Cloud Storage com sucesso.');
-        return true;
-    } catch (err) {
-        console.warn('⚠️ Erro ao baixar CSV do Storage:', err.message);
-        return false;
-    }
-}
-
-// ============================================
-// CARREGA O CSV EM MEMÓRIA
+// CARREGA O CSV EM MEMÓRIA (DESATIVADO)
 // ============================================
 async function carregarCSVIndex() {
     if (csvIndexCarregado) return;
-    
     console.log('📊 Carregando índice do CSV em memória...');
     const inicio = Date.now();
-    
     csvIndexCNPJ = new Map();
     csvIndexNome = new Map();
-    
     if (!fs.existsSync(CSV_PATH)) {
         console.warn('⚠️ CSV não encontrado em:', CSV_PATH);
         console.warn('⚠️ Busca por nome/CNPJ no CSV desativada. Usando apenas BrasilAPI e banco local.');
         csvIndexCarregado = true;
         return;
     }
-    
     return new Promise(function(resolve, reject) {
         let linhas = 0;
         fs.createReadStream(CSV_PATH)
@@ -211,7 +157,6 @@ async function carregarCSVIndex() {
                 const cnpj = row.CNPJ ? row.CNPJ.replace(/\D/g, '') : '';
                 const razao = (row["RAZAO SOCIAL"] || row.razao_social || "").toLowerCase().trim();
                 const fantasia = (row["NOME FANTASIA"] || row.nome_fantasia || "").toLowerCase().trim();
-                
                 if (cnpj) {
                     csvIndexCNPJ.set(cnpj, {
                         cnpj: row.CNPJ,
@@ -224,7 +169,6 @@ async function carregarCSVIndex() {
                         municipio: row.MUNICIPIO || ""
                     });
                 }
-                
                 if (razao) {
                     if (!csvIndexNome.has(razao)) {
                         csvIndexNome.set(razao, []);
@@ -253,39 +197,19 @@ async function carregarCSVIndex() {
 }
 
 // ============================================
-// HISTÓRICO DE CNPJs
+// HISTÓRICO DE CNPJs (DESATIVADO)
 // ============================================
 let historicoCNPJs = {};
 let historicoCarregado = false;
 
 async function carregarHistorico() {
     if (historicoCarregado) return;
-    try {
-        if (!storage) {
-            console.warn('⚠️ Storage não disponível. Histórico não carregado.');
-            return;
-        }
-        const bucket = storage.bucket(BUCKET_NAME);
-        const file = bucket.file(HISTORICO_FILE);
-        const [exists] = await file.exists();
-        if (exists) {
-            const [contents] = await file.download();
-            historicoCNPJs = JSON.parse(contents.toString());
-        }
-    } catch (err) { /* silencioso */ }
     historicoCarregado = true;
+    return;
 }
 
 async function salvarHistorico() {
-    try {
-        if (!storage) {
-            console.warn('⚠️ Storage não disponível. Histórico não salvo.');
-            return;
-        }
-        const bucket = storage.bucket(BUCKET_NAME);
-        const file = bucket.file(HISTORICO_FILE);
-        await file.save(JSON.stringify(historicoCNPJs, null, 2), { contentType: "application/json" });
-    } catch (err) { /* silencioso */ }
+    return;
 }
 
 function buscarNoHistorico(cnpj) {
@@ -310,43 +234,22 @@ function salvarNoHistorico(cnpj, dados) {
         tiktok: dados.tiktok || "",
         ultima_consulta: new Date().toISOString()
     };
-    salvarHistorico();
 }
 
 // ============================================
-// CONTADORES
+// CONTADORES (DESATIVADO)
 // ============================================
 let contadores = { total_analises: 0, cnpjs: {}, usuarios: {} };
 let contadoresCarregados = false;
 
 async function carregarContadores() {
     if (contadoresCarregados) return;
-    try {
-        if (!storage) {
-            console.warn('⚠️ Storage não disponível. Contadores não carregados.');
-            return;
-        }
-        const bucket = storage.bucket(BUCKET_NAME);
-        const file = bucket.file(CONTADORES_FILE);
-        const [exists] = await file.exists();
-        if (exists) {
-            const [contents] = await file.download();
-            contadores = JSON.parse(contents.toString());
-        }
-    } catch (err) { /* silencioso */ }
     contadoresCarregados = true;
+    return;
 }
 
 async function salvarContadores() {
-    try {
-        if (!storage) {
-            console.warn('⚠️ Storage não disponível. Contadores não salvos.');
-            return;
-        }
-        const bucket = storage.bucket(BUCKET_NAME);
-        const file = bucket.file(CONTADORES_FILE);
-        await file.save(JSON.stringify(contadores, null, 2), { contentType: "application/json" });
-    } catch (err) { /* silencioso */ }
+    return;
 }
 
 function incrementarContadores(cnpj, email) {
@@ -361,7 +264,6 @@ function incrementarContadores(cnpj, email) {
         contadores.usuarios = contadores.usuarios || {};
         contadores.usuarios[hashEmail] = (contadores.usuarios[hashEmail] || 0) + 1;
     }
-    salvarContadores();
 }
 
 function getContadores(cnpj, email) {
@@ -378,56 +280,32 @@ function getContadores(cnpj, email) {
 }
 
 // ============================================
-// TENDÊNCIAS
+// TENDÊNCIAS (DESATIVADO)
 // ============================================
 let tendencias = {};
 let tendenciasCarregadas = false;
 
 async function carregarTendencias() {
     if (tendenciasCarregadas) return;
-    try {
-        if (!storage) {
-            console.warn('⚠️ Storage não disponível. Tendências não carregadas.');
-            return;
-        }
-        const bucket = storage.bucket(BUCKET_NAME);
-        const file = bucket.file(TENDENCIAS_FILE);
-        const [exists] = await file.exists();
-        if (exists) {
-            const [contents] = await file.download();
-            tendencias = JSON.parse(contents.toString());
-        }
-    } catch (err) { /* silencioso */ }
     tendenciasCarregadas = true;
+    return;
 }
 
 async function salvarTendencias() {
-    try {
-        if (!storage) {
-            console.warn('⚠️ Storage não disponível. Tendências não salvas.');
-            return;
-        }
-        const bucket = storage.bucket(BUCKET_NAME);
-        const file = bucket.file(TENDENCIAS_FILE);
-        await file.save(JSON.stringify(tendencias, null, 2), { contentType: "application/json" });
-    } catch (err) { /* silencioso */ }
+    return;
 }
 
 function getTendenciaEvolucao(cnpj, scoreAtual, riscosAtuais) {
     const limpo = normalizarCNPJ(cnpj);
     const anterior = tendencias[limpo];
-    
     tendencias[limpo] = {
         score: scoreAtual,
         riscos: riscosAtuais,
         data: new Date().toISOString()
     };
-    salvarTendencias();
-
     if (!anterior || !anterior.riscos) {
         return { tendencia: "primeira", tendenciaTexto: "Primeira análise.", evolucao: [] };
     }
-
     const evolucao = riscosAtuais.map(function(rAtual) {
         const rAnterior = (anterior.riscos || []).find(function(r) { return r.risco === rAtual.risco; });
         const valorAnterior = rAnterior ? rAnterior.contribuicao : null;
@@ -440,12 +318,10 @@ function getTendenciaEvolucao(cnpj, scoreAtual, riscosAtuais) {
         }
         return { risco: rAtual.risco, anterior: valorAnterior, atual: valorAtual, variacao: variacao };
     });
-
     const diffScore = scoreAtual - anterior.score;
     let tendencia = "estavel";
     if (diffScore > 0.5) tendencia = "deteriorando";
     else if (diffScore < -0.5) tendencia = "melhorando";
-
     return { tendencia: tendencia, tendenciaTexto: "", evolucao: evolucao };
 }
 
@@ -515,21 +391,17 @@ async function buscarCNPJnaBrasilAPI(cnpj) {
         if (data && !data.error) {
             let socioMajoritario = null;
             let controladora = null;
-            
             if (data.qsa && data.qsa.length > 0) {
                 const sociosOrdenados = data.qsa.slice().sort(function(a, b) {
                     return (b.percentual_capital_social || 0) - (a.percentual_capital_social || 0);
                 });
-                
                 const socioPrincipal = sociosOrdenados[0];
                 if (socioPrincipal) {
                     const documento = socioPrincipal.cpf_cnpj_socio || '';
                     const nome = socioPrincipal.nome_socio || '';
                     const percentual = socioPrincipal.percentual_capital_social || 0;
                     const qualificacao = socioPrincipal.qualificacao_socio || '';
-                    
                     const docLimpo = documento.replace(/\D/g, '');
-                    
                     if (docLimpo.length === 11) {
                         socioMajoritario = {
                             nome: nome,
@@ -571,7 +443,6 @@ async function buscarCNPJnaBrasilAPI(cnpj) {
                     }
                 }
             }
-
             return {
                 cnpj: data.cnpj,
                 razao_social: data.razao_social || "",
@@ -589,7 +460,9 @@ async function buscarCNPJnaBrasilAPI(cnpj) {
                 qsa: data.qsa || []
             };
         }
-    } catch (err) { /* silencioso */ }
+    } catch (err) {
+        return null;
+    }
     return null;
 }
 
@@ -617,12 +490,14 @@ async function buscarCNPJnaReceitaWS(cnpj) {
                 municipio: data.municipio || ""
             };
         }
-    } catch (err) { /* silencioso */ }
+    } catch (err) {
+        return null;
+    }
     return null;
 }
 
 // ============================================
-// BUSCA CNPJ NO CSV
+// BUSCA CNPJ NO CSV (DESATIVADO)
 // ============================================
 async function buscarCNPJnoCSV(cnpj) {
     await carregarCSVIndex();
@@ -632,15 +507,13 @@ async function buscarCNPJnoCSV(cnpj) {
 }
 
 // ============================================
-// BUSCA CNPJ POR NOME NO CSV
+// BUSCA CNPJ POR NOME NO CSV (DESATIVADO)
 // ============================================
 async function buscarCNPJnoCSVPorNome(nome) {
     await carregarCSVIndex();
     if (!csvIndexNome) return null;
-    
     const nomeBusca = nome.toLowerCase().trim();
     let encontrado = null;
-    
     if (csvIndexNome.has(nomeBusca)) {
         const cnpjs = csvIndexNome.get(nomeBusca);
         if (cnpjs && cnpjs.length > 0) {
@@ -649,7 +522,6 @@ async function buscarCNPJnoCSVPorNome(nome) {
             if (encontrado) return encontrado;
         }
     }
-    
     for (const [key, cnpjs] of csvIndexNome) {
         if (key.includes(nomeBusca) || nomeBusca.includes(key)) {
             if (cnpjs && cnpjs.length > 0) {
@@ -659,7 +531,6 @@ async function buscarCNPJnoCSVPorNome(nome) {
             }
         }
     }
-    
     return null;
 }
 
@@ -669,32 +540,26 @@ async function buscarCNPJnoCSVPorNome(nome) {
 async function cadeiaDeBuscaCNPJ(entrada) {
     const limpo = normalizarCNPJ(entrada);
     let dados = null;
-
     if (limpo.length === 14) {
         dados = await buscarCNPJnaBrasilAPI(limpo);
         if (dados) {
             try { await carregarHistorico(); salvarNoHistorico(limpo, dados); } catch(e) {}
             return { ...dados, fonte: "brasilapi" };
         }
-
         dados = await buscarCNPJnaReceitaWS(limpo);
         if (dados) {
             try { await carregarHistorico(); salvarNoHistorico(limpo, dados); } catch(e) {}
             return { ...dados, fonte: "receitaws" };
         }
-
         dados = await buscarCNPJnoCSV(limpo);
         if (dados) {
             try { salvarNoHistorico(limpo, dados); } catch(e) {}
             return { ...dados, fonte: "csv_veri" };
         }
-
         return null;
     }
-
     if (entrada && entrada.length > 2) {
         const nomeBusca = entrada.trim();
-
         const localResult = encontrarCNPJPorNome(nomeBusca);
         if (localResult && localResult.cnpj) {
             const cnpjEncontrado = localResult.cnpj.replace(/\D/g, '');
@@ -712,7 +577,6 @@ async function cadeiaDeBuscaCNPJ(entrada) {
                 fonte: "banco_local"
             };
         }
-
         const csvResult = await buscarCNPJnoCSVPorNome(nomeBusca);
         if (csvResult && csvResult.cnpj) {
             const cnpjEncontrado = csvResult.cnpj.replace(/\D/g, '');
@@ -731,7 +595,6 @@ async function cadeiaDeBuscaCNPJ(entrada) {
             };
         }
     }
-
     return null;
 }
 
@@ -779,7 +642,6 @@ app.post("/analisar", async function(req, res) {
     try {
         const dados = req.body;
         const inicio = Date.now();
-
         if (dados.analisado && dados.analisado.cnpj) {
             const limpo = normalizarCNPJ(dados.analisado.cnpj);
             if (limpo.length === 14) {
@@ -795,35 +657,28 @@ app.post("/analisar", async function(req, res) {
                 }
             }
         }
-
         const resultado = calcularRiscos(dados);
-
         const hashInput = crypto
             .createHash("sha256")
             .update(JSON.stringify(dados))
             .digest("hex")
             .substring(0, 16);
-
         const hashOutput = crypto
             .createHash("sha256")
             .update(JSON.stringify(resultado))
             .digest("hex")
             .substring(0, 16);
-
         const tempoExecucao = Date.now() - inicio;
         const documento = dados.analisado.cnpj || dados.analisado.cpf || "sem_documento";
         const hash_auditoria = gerarHashAuditoria(documento);
         const email = dados.solicitante && dados.solicitante.email ? dados.solicitante.email : "";
-
         try { await carregarContadores(); incrementarContadores(documento, email); } catch(e) {}
         const conts = getContadores(documento, email);
-
         await carregarTendencias();
         const topRiscosParaSalvar = resultado.top_riscos.map(function(r) {
             return { risco: r.risco, contribuicao: r.contribuicao };
         });
         const tendenciaInfo = getTendenciaEvolucao(documento, resultado.score_global, topRiscosParaSalvar);
-
         const resposta = {
             analise_id: hash_auditoria,
             ...resultado,
@@ -845,7 +700,6 @@ app.post("/analisar", async function(req, res) {
                 metodologia: config.METODOLOGIA_VERSAO || "VERI 3.2"
             }
         };
-
         cacheResultados.set(hash_auditoria, resposta);
         res.json(resposta);
     } catch (err) {
@@ -859,12 +713,10 @@ app.post("/analisar", async function(req, res) {
 function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMotor) {
     var evidencias = [];
     var agora = new Date().toISOString();
-
     if (dadosFormulario && dadosFormulario.valor !== undefined) {
         var valor = dadosFormulario.valor || 0;
         var parcelas = dadosFormulario.parcelas || 1;
         var valorParcela = parcelas > 0 ? valor / parcelas : 0;
-
         var isPF = (dadosCadastrais && dadosCadastrais.tipo === "pessoa");
         var ticketDiario = 0;
         if (isPF) {
@@ -885,7 +737,6 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
             }
             ticketDiario = faturamentoMensal / 30;
         }
-
         if (ticketDiario > 0 && valorParcela > 0) {
             var percentual = Math.round((valorParcela / ticketDiario) * 100);
             var baseTexto = isPF ? "renda diária" : "faturamento diário";
@@ -909,7 +760,6 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
             });
         }
     }
-
     var tempoMercado = 0;
     if (dadosCadastrais && dadosCadastrais.data_abertura) {
         var dataAbertura = new Date(dadosCadastrais.data_abertura);
@@ -937,7 +787,6 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
             risco_associado: "DESCONTINUIDADE"
         });
     }
-
     if (dadosCadastrais && dadosCadastrais.situacao) {
         var situacao = dadosCadastrais.situacao.toUpperCase();
         var evidenciaVeracidade = "";
@@ -955,7 +804,6 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
             risco_associado: "VERACIDADE"
         });
     }
-
     if (dadosCadastrais && dadosCadastrais.setor) {
         evidencias.push({
             id: "EVID-REPUTACIONAL-" + Date.now(),
@@ -966,7 +814,6 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
             risco_associado: "REPUTACIONAL"
         });
     }
-
     if (dadosFormulario) {
         var conhecimento = dadosFormulario.conhecimento || "nao_informado";
         var experiencia = dadosFormulario.experiencia || "nao_informada";
@@ -980,7 +827,6 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
             risco_associado: "COMPORTAMENTAL"
         });
     }
-
     return evidencias;
 }
 
@@ -1007,7 +853,7 @@ app.post("/enriquecer", async function(req, res) {
     const cnpjLimpo = normalizarCNPJ(cnpj);
 
     try {
-        // 1. CACHE - VERIFICAÇÃO SEGURA
+        // CACHE
         if (ENABLE_CACHE && cnpjLimpo) {
             try {
                 const cached = await getCache(cnpjLimpo);
@@ -1023,11 +869,7 @@ app.post("/enriquecer", async function(req, res) {
             }
         }
 
-        // ============================================================
-        // BUSCA NA BRASILAPI PARA OBTER PORTE E DATA_ABERTURA
-        // ============================================================
         var dadosCadastraisCompletos = {};
-
         if (cnpjLimpo && cnpjLimpo.length === 14) {
             try {
                 const resultadoBusca = await cadeiaDeBuscaCNPJ(cnpjLimpo);
@@ -1056,17 +898,12 @@ app.post("/enriquecer", async function(req, res) {
             }
         }
 
-        // ============================================================
-        // ORQUESTRADOR
-        // ============================================================
         const modulo = req.body.modulo || "geral";
         const subModulo = req.body.subModulo || "geral";
-
         var ufEmpresa = null;
         if (dadosCadastraisCompletos && dadosCadastraisCompletos.uf) {
             ufEmpresa = dadosCadastraisCompletos.uf;
         }
-
         if (!ufEmpresa) {
             try {
                 const brasilUf = await buscarCNPJnaBrasilAPI(cnpjLimpo);
@@ -1077,7 +914,6 @@ app.post("/enriquecer", async function(req, res) {
                 console.warn("Erro ao buscar UF via BrasilAPI:", err.message);
             }
         }
-
         if (ufEmpresa) {
             console.log("UF da empresa:", ufEmpresa);
         } else {
@@ -1116,7 +952,6 @@ app.post("/enriquecer", async function(req, res) {
 
         var faturamentoAnualEncontrado = null;
         var faturamentoFonte = "";
-
         if (dadosOrquestrador.faturamento_anual) {
             faturamentoAnualEncontrado = dadosOrquestrador.faturamento_anual;
             faturamentoFonte = "banco_regional_orquestrador";
@@ -1135,7 +970,6 @@ app.post("/enriquecer", async function(req, res) {
             faturamentoFonte = "estimado_por_porte";
             console.log("⚠️ Faturamento estimado por porte:", faturamentoAnualEncontrado);
         }
-
         dadosCadastrais.faturamento_anual = faturamentoAnualEncontrado;
         dadosCadastrais.faturamento_fonte = faturamentoFonte;
 
@@ -1143,7 +977,6 @@ app.post("/enriquecer", async function(req, res) {
         var parcelasNegocio = 1;
         var tipoPagamento = "avista";
         var tipoNegocio = "";
-
         if (req.body.valor_contratacao) {
             valorNegocio = parseFloat(req.body.valor_contratacao) || 0;
             parcelasNegocio = parseInt(req.body.parcelas_contratacao) || 1;
@@ -1166,16 +999,9 @@ app.post("/enriquecer", async function(req, res) {
             tipoNegocio = "negocio";
         }
 
-        // ============================================================
-        // GEMINI (com fallback DeepSeek)
-        // ============================================================
         let estruturado = await estruturar(dadosOrquestrador.fontes, TIMEOUT_GEMINI_MS);
 
-        // ============================================================
-        // VALIDAÇÃO
-        // ============================================================
         console.log('📊 Validando estrutura recebida do Gemini...');
-
         if (!estruturado || typeof estruturado !== 'object') {
             console.warn('⚠️ Gemini retornou null. Criando estrutura mínima de emergência.');
             estruturado = {
@@ -1192,7 +1018,6 @@ app.post("/enriquecer", async function(req, res) {
                 fontes_consultadas: []
             };
         }
-
         if (!estruturado.dados_estruturados) {
             console.warn('⚠️ dados_estruturados ausente. Criando estrutura padrão.');
             estruturado.dados_estruturados = {
@@ -1203,14 +1028,12 @@ app.post("/enriquecer", async function(req, res) {
                 red_flags: {}
             };
         }
-
         const secoes = ['reputacional', 'resolutividade', 'comportamental', 'saude_financeira', 'red_flags'];
         for (let i = 0; i < secoes.length; i++) {
             if (!estruturado.dados_estruturados[secoes[i]]) {
                 estruturado.dados_estruturados[secoes[i]] = {};
             }
         }
-
         if (!estruturado.padroes_risco || !Array.isArray(estruturado.padroes_risco)) {
             estruturado.padroes_risco = [];
         }
@@ -1220,7 +1043,6 @@ app.post("/enriquecer", async function(req, res) {
         if (!estruturado.fontes_consultadas || !Array.isArray(estruturado.fontes_consultadas)) {
             estruturado.fontes_consultadas = [];
         }
-
         if (!estruturado.status_busca) {
             estruturado.status_busca = 'sucesso';
         }
@@ -1233,14 +1055,9 @@ app.post("/enriquecer", async function(req, res) {
                 motivo: 'Estrutura garantida pelo sistema'
             };
         }
-
-        const validacao = { valido: true, erros: [] };
         console.log('✅ Estrutura garantida com sucesso.');
 
-        // 5. SCORES
         const scores = extrairScores(estruturado.dados_estruturados || {});
-
-        // 6. CALCULA TEMPO DE MERCADO
         if (dadosCadastrais.data_abertura) {
             const dataAbertura = new Date(dadosCadastrais.data_abertura);
             const agora = new Date();
@@ -1250,7 +1067,6 @@ app.post("/enriquecer", async function(req, res) {
         } else {
             dadosCadastrais.tempo_mercado_anos = 0;
         }
-
         let faturamentoMensal = null;
         if (dadosCadastrais.faturamento_anual) {
             faturamentoMensal = dadosCadastrais.faturamento_anual / 12;
@@ -1260,7 +1076,6 @@ app.post("/enriquecer", async function(req, res) {
         }
 
         const negocioStr = req.body.negocio ? String(req.body.negocio) : "";
-
         const dadosMotor = {
             analisado: {
                 cnpj: cnpjLimpo,
@@ -1413,7 +1228,6 @@ app.post("/enriquecer", async function(req, res) {
             }
         };
 
-        // 9. CACHE
         if (cnpjLimpo) {
             try {
                 await setCache(cnpjLimpo, response);
@@ -1441,12 +1255,6 @@ const PORT = process.env.PORT || 3000;
 
 async function iniciarServidor() {
     console.log('🚀 Iniciando servidor VERI API...');
-    
-    // ============================================================
-    // CSV NO GOOGLE CLOUD STORAGE
-    // NÃO baixar nem indexar os 68 milhões de registros no Render.
-    // O arquivo permanece no Google Cloud.
-    // ============================================================
     console.log('☁️ CSV permanece no Google Cloud Storage.');
     console.log('☁️ Render NÃO fará download nem indexação dos 68 milhões de registros.');
     console.log('✅ BrasilAPI + banco local + demais fontes permanecem ativos.');
