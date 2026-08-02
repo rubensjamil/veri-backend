@@ -39,40 +39,27 @@ const crypto = require("crypto");
 require('dotenv').config();
 
 // ============================================================
-// CONFIGURA CREDENCIAIS DO GOOGLE CLOUD
+// CONFIGURA CREDENCIAIS DO GOOGLE CLOUD - APENAS SECRET FILE
 // ============================================================
+const secretPath = '/etc/secrets/google-creds.json';
 let credenciaisCarregadas = false;
 
-// 1. Tenta carregar do Secret File (Render)
-const secretPath = '/etc/secrets/google-creds.json';
 if (fs.existsSync(secretPath)) {
     process.env.GOOGLE_APPLICATION_CREDENTIALS = secretPath;
-    console.log('✅ Credenciais do Google Cloud carregadas do Secret File.');
+    console.log('✅ Credenciais do Google Cloud carregadas do Secret File:', secretPath);
     credenciaisCarregadas = true;
+} else {
+    console.error('❌ CREDENCIAIS NÃO ENCONTRADAS! O arquivo', secretPath, 'não existe.');
+    console.error('❌ O sistema continuará rodando, mas o CSV não será baixado.');
 }
 
-// 2. Se não houver Secret File, tenta carregar da variável de ambiente
-if (!credenciaisCarregadas && process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
-    try {
-        const tempPath = '/tmp/credenciais.json';
-        fs.writeFileSync(tempPath, process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
-        process.env.GOOGLE_APPLICATION_CREDENTIALS = tempPath;
-        console.log('✅ Credenciais do Google Cloud configuradas via variável de ambiente.');
-        credenciaisCarregadas = true;
-    } catch (err) {
-        console.warn('⚠️ Erro ao criar arquivo temporário de credenciais:', err.message);
-    }
-}
-
-// 3. Último fallback: arquivo local
 if (!credenciaisCarregadas) {
-    const localCredPath = path.join(__dirname, 'credenciais.json');
-    if (fs.existsSync(localCredPath)) {
-        process.env.GOOGLE_APPLICATION_CREDENTIALS = localCredPath;
-        console.log('✅ Credenciais do Google Cloud carregadas do arquivo local.');
-        credenciaisCarregadas = true;
-    }
+    console.warn('⚠️ Nenhuma credencial do Google Cloud encontrada. O Storage pode não funcionar.');
 }
+
+// Remove qualquer variável de ambiente que possa estar causando conflito
+delete process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+delete process.env.GOOGLE_CREDENTIALS;
 
 if (!credenciaisCarregadas) {
     console.warn('⚠️ Nenhuma credencial do Google Cloud encontrada. O Storage pode não funcionar.');
