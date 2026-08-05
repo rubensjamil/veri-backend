@@ -1,7 +1,9 @@
 // ============================================================
 // orchestrator.js - Orquestra fontes de dados REAIS para a VERI
-// VERSÃO DEFINITIVA 4.0.11 - CORREÇÃO DE SINTAXE
+// VERSÃO DEFINITIVA 4.0.12 - CORREÇÃO DE SINTAXE
 // CORRIGIDO: DEMAIS substituído por GIGANTE
+// CORRIGIDO: Faturamento do banco local preservado
+// CORRIGIDO: Logs adicionados para rastrear faturamento
 // ============================================================
 
 const { googleSearch } = require('./sources/googleSearch');
@@ -33,7 +35,7 @@ try {
     console.warn('⚠️ cnpjs_famosos.json não encontrado ou inválido. Banco local desativado.');
 }
 
-const VERSAO_ORQUESTRADOR = '4.0.11';
+const VERSAO_ORQUESTRADOR = '4.0.12';
 const FONTES_UTILIZADAS = [
     'Google Search',
     'BrasilAPI',
@@ -165,6 +167,7 @@ function encontrarCNPJPorNome(nome, uf) {
                     setor: empresa.setor,
                     uf: ufKey,
                     nome_encontrado: empresa.nome,
+                    porte: empresa.porte || 'MEDIO',
                     fonte: 'banco_local'
                 };
             }
@@ -671,6 +674,8 @@ async function cadeiaDeBuscaCNPJ(limpo) {
 async function coletarEvidenciasReais(nome, cnpj, cpf, uf, modulo, subModulo) {
     var inicio = Date.now();
 
+    console.log('🔍 INICIANDO COLETA PARA:', nome);
+
     var cnpjEncontrado = cnpj;
     var dadosCadastrais = null;
     var faturamentoDoBanco = null;
@@ -681,6 +686,8 @@ async function coletarEvidenciasReais(nome, cnpj, cpf, uf, modulo, subModulo) {
     if (!ufEncontrada && !cnpj && nome) {
         var resultadoLocal = encontrarCNPJPorNome(nome, uf);
         if (resultadoLocal && resultadoLocal.cnpj) {
+            console.log('📊 BANCO LOCAL ENCONTRADO:', resultadoLocal.nome_encontrado);
+            console.log('📊 FATURAMENTO DO BANCO:', resultadoLocal.faturamento_anual);
             cnpjEncontrado = resultadoLocal.cnpj;
             faturamentoDoBanco = resultadoLocal.faturamento_anual;
             setorDoBanco = resultadoLocal.setor;
@@ -693,6 +700,8 @@ async function coletarEvidenciasReais(nome, cnpj, cpf, uf, modulo, subModulo) {
     if (!ufEncontrada && !cnpj && nome) {
         var resultadoLocal = encontrarCNPJPorNome(nome, null);
         if (resultadoLocal && resultadoLocal.cnpj) {
+            console.log('📊 BANCO LOCAL ENCONTRADO (fallback):', resultadoLocal.nome_encontrado);
+            console.log('📊 FATURAMENTO DO BANCO (fallback):', resultadoLocal.faturamento_anual);
             cnpjEncontrado = resultadoLocal.cnpj;
             faturamentoDoBanco = resultadoLocal.faturamento_anual;
             setorDoBanco = resultadoLocal.setor;
@@ -717,10 +726,13 @@ async function coletarEvidenciasReais(nome, cnpj, cpf, uf, modulo, subModulo) {
     }
 
     if (cnpjEncontrado && (!dadosCadastrais || (dadosCadastrais && dadosCadastrais.fonte_cnpj === 'banco_local'))) {
+        console.log('🔍 Buscando dados complementares para CNPJ:', cnpjEncontrado);
         var dadosCadastraisCompletos = await consultarReceita(cnpjEncontrado);
         if (dadosCadastraisCompletos) {
+            // 🔧 CORREÇÃO: Preservar faturamento do banco local
             if (faturamentoDoBanco) {
                 dadosCadastraisCompletos.faturamento_anual = faturamentoDoBanco;
+                console.log('✅ FATURAMENTO DO BANCO PRESERVADO:', faturamentoDoBanco);
             }
             if (setorDoBanco) {
                 dadosCadastraisCompletos.setor = setorDoBanco;
@@ -730,6 +742,26 @@ async function coletarEvidenciasReais(nome, cnpj, cpf, uf, modulo, subModulo) {
             porteEncontrado = dadosCadastrais.porte || 'MEDIO';
             ufEncontrada = dadosCadastrais.uf || ufEncontrada;
             console.log('✅ BrasilAPI retornou dados para CNPJ: ' + cnpjEncontrado + ' porte: ' + porteEncontrado + ' abertura: ' + dadosCadastrais.data_abertura);
+        } else {
+            console.warn('⚠️ BrasilAPI NÃO retornou dados para CNPJ:', cnpjEncontrado);
+            // Se a BrasilAPI falhou, cria dadosCadastrais com o que temos do banco local
+            if (!dadosCadastrais) {
+                dadosCadastrais = {
+                    cnpj: cnpjEncontrado,
+                    razao_social: nome || '',
+                    porte: porteEncontrado || 'MEDIO',
+                    data_abertura: '',
+                    situacao: 'ATIVA',
+                    uf: ufEncontrada || '',
+                    fonte_cnpj: 'banco_local_sem_api'
+                };
+                if (faturamentoDoBanco) {
+                    dadosCadastrais.faturamento_anual = faturamentoDoBanco;
+                }
+                if (setorDoBanco) {
+                    dadosCadastrais.setor = setorDoBanco;
+                }
+            }
         }
     }
 
@@ -740,6 +772,26 @@ async function coletarEvidenciasReais(nome, cnpj, cpf, uf, modulo, subModulo) {
             ufEncontrada = dadosCadastrais.uf || ufEncontrada;
             console.log('✅ BrasilAPI (fallback) retornou dados: porte: ' + porteEncontrado);
         }
+    }
+
+    // 🔧 CORREÇÃO: Se ainda não temos dadosCadastrais, cria com o que temos
+    if (!dadosCadastrais && cnpjEncontrado) {
+        dadosCadastrais = {
+            cnpj: cnpjEncontrado,
+            razao_social: nome || '',
+            porte: porteEncontrado || 'MEDIO',
+            data_abertura: '',
+            situacao: 'ATIVA',
+            uf: ufEncontrada || '',
+            fonte_cnpj: 'fallback_final'
+        };
+        if (faturamentoDoBanco) {
+            dadosCadastrais.faturamento_anual = faturamentoDoBanco;
+        }
+        if (setorDoBanco) {
+            dadosCadastrais.setor = setorDoBanco;
+        }
+        console.log('⚠️ Criando dadosCadastrais de fallback para CNPJ:', cnpjEncontrado);
     }
 
     var cpfEncontrado = cpf;
@@ -800,6 +852,13 @@ async function coletarEvidenciasReais(nome, cnpj, cpf, uf, modulo, subModulo) {
     if (dadosCadastrais && ufEncontrada && !dadosCadastrais.uf) {
         dadosCadastrais.uf = ufEncontrada;
     }
+
+    // 🔧 CORREÇÃO: Garantir que faturamento_anual seja preservado
+    if (faturamentoDoBanco && dadosCadastrais) {
+        dadosCadastrais.faturamento_anual = faturamentoDoBanco;
+    }
+
+    console.log('📤 FATURAMENTO FINAL:', faturamentoDoBanco);
 
     var resultado = {
         fontes: fontes,

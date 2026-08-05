@@ -28,6 +28,7 @@
 // CORRIGIDO: Erro de sintaxe na linha 291 (crases no console.log)
 // CORRIGIDO: Busca no Storage para razão social e fallback de CNPJ
 // CORRIGIDO: DEMAIS substituído por GIGANTE em todos os lugares
+// CORRIGIDO: Prioriza faturamento do orquestrador antes de estimar por porte
 // ============================================
 
 const express = require("express");
@@ -1346,10 +1347,15 @@ app.post("/enriquecer", async function(req, res) {
         var faturamentoAnualEncontrado = null;
         var faturamentoFonte = "";
 
+        // 🔧 CORRIGIDO: Prioriza o faturamento do orquestrador (que vem do banco local)
         if (dadosOrquestrador.faturamento_anual) {
             faturamentoAnualEncontrado = dadosOrquestrador.faturamento_anual;
             faturamentoFonte = "banco_regional_orquestrador";
             console.log("✅ Faturamento obtido do banco regional:", faturamentoAnualEncontrado);
+        } else if (dadosCadastrais.faturamento_anual && dadosCadastrais.faturamento_anual > 0) {
+            faturamentoAnualEncontrado = dadosCadastrais.faturamento_anual;
+            faturamentoFonte = "dados_cadastrais";
+            console.log("✅ Faturamento obtido dos dados cadastrais:", faturamentoAnualEncontrado);
         } else {
             const porteEmpresa = dadosCadastrais.porte || "MEDIO";
             const faturamentoAnualPorPorte = {
