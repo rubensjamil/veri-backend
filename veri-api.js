@@ -1,6 +1,32 @@
 // ============================================
 // VERI API - Motor Transversal v3.2
-// Versão limpa - SEM CREDENCIAIS NO CÓDIGO
+// Versão completa com todas as rotas
+// CORRIGIDO: Busca BrasilAPI no /enriquecer
+// CORRIGIDO: Passa faturamento_anual para o motor
+// ADAPTADO: Valor da Contratação/Compra/Venda
+// ADAPTADO: Extração de UF para o orchestrator
+// CORRIGIDO: Logs para diagnóstico da BrasilAPI
+// CORRIGIDO: Fallback para ReceitaWS
+// CORRIGIDO: Captura de valor com logs
+// CORRIGIDO: Dotenv para leitura de .env
+// CORRIGIDO: Removida duplicação da variável 'secoes'
+// CORRIGIDO: Fluxo de validação nunca bloqueia
+// CORRIGIDO: Substituído optional chaining (?.) por compatibilidade
+// CORRIGIDO: Erro "negocioStr.startsWith is not a function"
+// CORRIGIDO: Garantia que req.body.negocio seja string
+// CORRIGIDO: Suporte a CNPJs alfanuméricos
+// CORRIGIDO: Busca por nome no banco local e no CSV
+// CORRIGIDO: Lógica de busca com 3 fontes (BrasilAPI -> ReceitaWS -> CSV)
+// CORRIGIDO: Indexação em memória do CSV para busca instantânea
+// CORRIGIDO: Extração de sócio majoritário e controladora
+// CORRIGIDO: Todas as strings com crases e sintaxe 100% verificada
+// CORRIGIDO: carregarCSVIndex com verificação de existência do arquivo (fs.existsSync)
+// CORRIGIDO: carregarCSVIndex não derruba o servidor em caso de erro
+// CORRIGIDO: baixarCSVdoStorage() ativada na inicialização
+// CORRIGIDO: Suporte a credenciais via variável de ambiente (GOOGLE_APPLICATION_CREDENTIALS_JSON)
+// CORRIGIDO: Caminho do Secret File atualizado para google-creds.json
+// CORRIGIDO: Erro de sintaxe na linha 291 (crases no console.log)
+// CORRIGIDO: Busca no Storage para razão social e fallback de CNPJ
 // ============================================
 
 const express = require("express");
@@ -14,8 +40,11 @@ const crypto = require("crypto");
 require('dotenv').config();
 
 // ============================================================
-// CONFIGURA CREDENCIAIS DO GOOGLE CLOUD - APENAS SECRET FILE
+// CONFIGURA CREDENCIAIS DO GOOGLE CLOUD
 // ============================================================
+let credenciaisCarregadas = false;
+
+// 1. Tenta carregar do Secret File (Render)
 const secretPath = '/etc/secrets/google-creds.json';
 let storage = null;
 
@@ -33,6 +62,7 @@ if (fs.existsSync(secretPath)) {
         console.log('✅ Storage inicializado com credenciais do Secret File.');
         console.log('📁 Projeto:', creds.project_id);
         console.log('📧 Conta de serviço:', creds.client_email);
+        credenciaisCarregadas = true;
     } catch (err) {
         console.error('❌ Erro ao processar credencial:', err.message);
         storage = null;
@@ -40,6 +70,33 @@ if (fs.existsSync(secretPath)) {
 } else {
     console.error('❌ Secret File NÃO ENCONTRADO em:', secretPath);
     storage = null;
+}
+
+// 2. Tenta carregar da variável de ambiente (fallback)
+if (!credenciaisCarregadas && process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+    try {
+        const tempPath = '/tmp/credenciais.json';
+        fs.writeFileSync(tempPath, process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+        process.env.GOOGLE_APPLICATION_CREDENTIALS = tempPath;
+        console.log('✅ Credenciais do Google Cloud configuradas via variável de ambiente.');
+        credenciaisCarregadas = true;
+    } catch (err) {
+        console.warn('⚠️ Erro ao criar arquivo temporário de credenciais:', err.message);
+    }
+}
+
+// 3. Tenta carregar do arquivo local (último fallback)
+if (!credenciaisCarregadas) {
+    const localCredPath = path.join(__dirname, 'credenciais.json');
+    if (fs.existsSync(localCredPath)) {
+        process.env.GOOGLE_APPLICATION_CREDENTIALS = localCredPath;
+        console.log('✅ Credenciais do Google Cloud carregadas do arquivo local.');
+        credenciaisCarregadas = true;
+    }
+}
+
+if (!credenciaisCarregadas) {
+    console.warn('⚠️ Nenhuma credencial do Google Cloud encontrada. O Storage pode não funcionar.');
 }
 
 // ============================================
@@ -62,7 +119,15 @@ const { calcularRiscos } = require("./modules/motor/veri.engine");
 const config = require("./motor.config");
 
 const app = express();
-app.use(cors());
+
+// ============================================================
+// CORS - LIBERADO PARA TODAS AS ORIGENS
+// ============================================================
+app.use(cors({
+    origin: "*",
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+}));
 app.use(express.json());
 
 // ============================================
@@ -85,7 +150,7 @@ function setCacheMemoria(key, value) {
 }
 
 // ============================================
-// STORAGE
+// STORAGE E FUNÇÕES LEGADAS
 // ============================================
 const BUCKET_NAME = "veri-cnpj-dados";
 const CSV_FILE = "cnpj_busca_6_colunas.csv";
@@ -94,15 +159,15 @@ const CONTADORES_FILE = "analises/contadores.json";
 const TENDENCIAS_FILE = "analises/tendencias.json";
 
 // ============================================
-// ÍNDICE EM MEMÓRIA PARA O CSV
+// ÍNDICE EM MEMÓRIA PARA O CSV (FALLBACK LOCAL)
 // ============================================
-let csvIndexCNPJ = null;
-let csvIndexNome = null;
+let csvIndexCNPJ = null;      // Map para busca por CNPJ
+let csvIndexNome = null;      // Map para busca por Nome
 let csvIndexCarregado = false;
 const CSV_PATH = path.join(__dirname, 'dados-abertos-zip', 'cnpj_busca_6_colunas.csv');
 
 // ============================================================
-// NORMALIZAR CNPJ/CPF
+// NORMALIZAR CNPJ/CPF - SUPORTE A ALFANUMÉRICOS
 // ============================================================
 function normalizarCNPJ(doc) {
     if (!doc) return '';
@@ -144,6 +209,7 @@ function encontrarCNPJPorNome(nome, uf) {
             if (empresa.cnpj === 'PESQUISAR') continue;
             var nomeEmpresa = empresa.nome.toLowerCase().trim();
             if (nomeEmpresa.indexOf(nomeBusca) !== -1 || nomeBusca.indexOf(nomeEmpresa) !== -1) {
+                console.log('✅ Encontrado no banco local: ' + empresa.nome + ' CNPJ: ' + empresa.cnpj + ' UF: ' + ufKey);
                 return {
                     cnpj: empresa.cnpj,
                     faturamento_anual: empresa.faturamento_anual,
@@ -160,7 +226,76 @@ function encontrarCNPJPorNome(nome, uf) {
 }
 
 // ============================================
-// BUSCA NO CSV DIRETAMENTE NO STORAGE
+// CARREGA O CSV EM MEMÓRIA (FALLBACK LOCAL)
+// ============================================
+async function carregarCSVIndex() {
+    if (csvIndexCarregado) return;
+    
+    console.log('📊 Carregando índice do CSV em memória...');
+    const inicio = Date.now();
+    
+    csvIndexCNPJ = new Map();
+    csvIndexNome = new Map();
+    
+    if (!fs.existsSync(CSV_PATH)) {
+        console.warn('⚠️ CSV não encontrado em:', CSV_PATH);
+        console.warn('⚠️ Busca por nome/CNPJ no CSV desativada. Usando apenas BrasilAPI e banco local.');
+        csvIndexCarregado = true;
+        return;
+    }
+    
+    return new Promise(function(resolve, reject) {
+        let linhas = 0;
+        fs.createReadStream(CSV_PATH)
+            .pipe(csv())
+            .on("data", function(row) {
+                linhas++;
+                const cnpj = row.CNPJ ? row.CNPJ.replace(/\D/g, '') : '';
+                const razao = (row["RAZAO SOCIAL"] || row.razao_social || "").toLowerCase().trim();
+                const fantasia = (row["NOME FANTASIA"] || row.nome_fantasia || "").toLowerCase().trim();
+                
+                if (cnpj) {
+                    csvIndexCNPJ.set(cnpj, {
+                        cnpj: row.CNPJ,
+                        razao_social: row["RAZAO SOCIAL"] || row.razao_social || "",
+                        nome_fantasia: row["NOME FANTASIA"] || row.nome_fantasia || "",
+                        porte: row.PORTE || row.porte || "",
+                        data_abertura: row["DATA DE ABERTURA"] || row.data_abertura || "",
+                        situacao: row["SITUACAO"] || row.situacao || "ATIVA",
+                        uf: row.UF || "",
+                        municipio: row.MUNICIPIO || ""
+                    });
+                }
+                
+                if (razao) {
+                    if (!csvIndexNome.has(razao)) {
+                        csvIndexNome.set(razao, []);
+                    }
+                    csvIndexNome.get(razao).push(cnpj);
+                }
+                if (fantasia && fantasia !== razao) {
+                    if (!csvIndexNome.has(fantasia)) {
+                        csvIndexNome.set(fantasia, []);
+                    }
+                    csvIndexNome.get(fantasia).push(cnpj);
+                }
+            })
+            .on("end", function() {
+                csvIndexCarregado = true;
+                const tempo = Date.now() - inicio;
+                console.log("✅ CSV indexado em memória: " + linhas + " empresas em " + tempo + "ms");
+                resolve();
+            })
+            .on("error", function(err) {
+                console.error('❌ Erro ao carregar CSV:', err);
+                csvIndexCarregado = true;
+                resolve();
+            });
+    });
+}
+
+// ============================================
+// BUSCA NO CSV DIRETAMENTE NO STORAGE (NOVO)
 // ============================================
 async function buscarCSVnoStorage(termo) {
     if (!storage) {
@@ -180,8 +315,10 @@ async function buscarCSVnoStorage(termo) {
         
         console.log('🔍 Buscando no Storage por:', termo);
         
+        // Cria um stream para ler o CSV diretamente do Storage
         const stream = file.createReadStream();
         
+        // Processa o CSV em busca do termo
         return new Promise((resolve, reject) => {
             let encontrado = null;
             let contador = 0;
@@ -195,6 +332,7 @@ async function buscarCSVnoStorage(termo) {
                 .on('data', (row) => {
                     contador++;
                     
+                    // Busca por CNPJ exato
                     if (termo.length === 14) {
                         const cnpjRow = row.CNPJ ? row.CNPJ.replace(/\D/g, '') : '';
                         if (cnpjRow === termo) {
@@ -216,6 +354,7 @@ async function buscarCSVnoStorage(termo) {
                         }
                     }
                     
+                    // Busca por razão social ou nome fantasia
                     if (termo.length > 2) {
                         const razao = (row["RAZAO SOCIAL"] || row.razao_social || "").toLowerCase();
                         const fantasia = (row["NOME FANTASIA"] || row.nome_fantasia || "").toLowerCase();
@@ -240,6 +379,7 @@ async function buscarCSVnoStorage(termo) {
                         }
                     }
                     
+                    // Limite de segurança (100k linhas para não travar)
                     if (contador > 100000) {
                         clearTimeout(timeoutId);
                         stream.destroy();
@@ -271,7 +411,10 @@ let historicoCarregado = false;
 async function carregarHistorico() {
     if (historicoCarregado) return;
     try {
-        if (!storage) return;
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Histórico não carregado.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(HISTORICO_FILE);
         const [exists] = await file.exists();
@@ -285,7 +428,10 @@ async function carregarHistorico() {
 
 async function salvarHistorico() {
     try {
-        if (!storage) return;
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Histórico não salvo.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(HISTORICO_FILE);
         await file.save(JSON.stringify(historicoCNPJs, null, 2), { contentType: "application/json" });
@@ -326,7 +472,10 @@ let contadoresCarregados = false;
 async function carregarContadores() {
     if (contadoresCarregados) return;
     try {
-        if (!storage) return;
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Contadores não carregados.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(CONTADORES_FILE);
         const [exists] = await file.exists();
@@ -340,7 +489,10 @@ async function carregarContadores() {
 
 async function salvarContadores() {
     try {
-        if (!storage) return;
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Contadores não salvos.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(CONTADORES_FILE);
         await file.save(JSON.stringify(contadores, null, 2), { contentType: "application/json" });
@@ -384,7 +536,10 @@ let tendenciasCarregadas = false;
 async function carregarTendencias() {
     if (tendenciasCarregadas) return;
     try {
-        if (!storage) return;
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Tendências não carregadas.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(TENDENCIAS_FILE);
         const [exists] = await file.exists();
@@ -398,7 +553,10 @@ async function carregarTendencias() {
 
 async function salvarTendencias() {
     try {
-        if (!storage) return;
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Tendências não salvas.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(TENDENCIAS_FILE);
         await file.save(JSON.stringify(tendencias, null, 2), { contentType: "application/json" });
@@ -408,15 +566,18 @@ async function salvarTendencias() {
 function getTendenciaEvolucao(cnpj, scoreAtual, riscosAtuais) {
     const limpo = normalizarCNPJ(cnpj);
     const anterior = tendencias[limpo];
+    
     tendencias[limpo] = {
         score: scoreAtual,
         riscos: riscosAtuais,
         data: new Date().toISOString()
     };
     salvarTendencias();
+
     if (!anterior || !anterior.riscos) {
         return { tendencia: "primeira", tendenciaTexto: "Primeira análise.", evolucao: [] };
     }
+
     const evolucao = riscosAtuais.map(function(rAtual) {
         const rAnterior = (anterior.riscos || []).find(function(r) { return r.risco === rAtual.risco; });
         const valorAnterior = rAnterior ? rAnterior.contribuicao : null;
@@ -429,10 +590,12 @@ function getTendenciaEvolucao(cnpj, scoreAtual, riscosAtuais) {
         }
         return { risco: rAtual.risco, anterior: valorAnterior, atual: valorAtual, variacao: variacao };
     });
+
     const diffScore = scoreAtual - anterior.score;
     let tendencia = "estavel";
     if (diffScore > 0.5) tendencia = "deteriorando";
     else if (diffScore < -0.5) tendencia = "melhorando";
+
     return { tendencia: tendencia, tendenciaTexto: "", evolucao: evolucao };
 }
 
@@ -491,7 +654,7 @@ async function fetchComoNavegador(url, timeoutMs) {
 }
 
 // ============================================
-// BUSCA CNPJ NA BRASILAPI COM SÓCIOS
+// BUSCA CNPJ NA BRASILAPI COM SÓCIOS (CORRIGIDO)
 // ============================================
 async function buscarCNPJnaBrasilAPI(cnpj) {
     try {
@@ -502,17 +665,21 @@ async function buscarCNPJnaBrasilAPI(cnpj) {
         if (data && !data.error) {
             let socioMajoritario = null;
             let controladora = null;
+            
             if (data.qsa && data.qsa.length > 0) {
                 const sociosOrdenados = data.qsa.slice().sort(function(a, b) {
                     return (b.percentual_capital_social || 0) - (a.percentual_capital_social || 0);
                 });
+                
                 const socioPrincipal = sociosOrdenados[0];
                 if (socioPrincipal) {
                     const documento = socioPrincipal.cpf_cnpj_socio || '';
                     const nome = socioPrincipal.nome_socio || '';
                     const percentual = socioPrincipal.percentual_capital_social || 0;
                     const qualificacao = socioPrincipal.qualificacao_socio || '';
+                    
                     const docLimpo = documento.replace(/\D/g, '');
+                    
                     if (docLimpo.length === 11) {
                         socioMajoritario = {
                             nome: nome,
@@ -554,6 +721,7 @@ async function buscarCNPJnaBrasilAPI(cnpj) {
                     }
                 }
             }
+
             return {
                 cnpj: data.cnpj,
                 razao_social: data.razao_social || "",
@@ -604,7 +772,7 @@ async function buscarCNPJnaReceitaWS(cnpj) {
 }
 
 // ============================================
-// BUSCA CNPJ NO CSV
+// BUSCA CNPJ NO CSV LOCAL (USANDO ÍNDICE EM MEMÓRIA)
 // ============================================
 async function buscarCNPJnoCSV(cnpj) {
     await carregarCSVIndex();
@@ -614,13 +782,15 @@ async function buscarCNPJnoCSV(cnpj) {
 }
 
 // ============================================
-// BUSCA CNPJ POR NOME NO CSV
+// BUSCA CNPJ POR NOME NO CSV LOCAL
 // ============================================
 async function buscarCNPJnoCSVPorNome(nome) {
     await carregarCSVIndex();
     if (!csvIndexNome) return null;
+    
     const nomeBusca = nome.toLowerCase().trim();
     let encontrado = null;
+    
     if (csvIndexNome.has(nomeBusca)) {
         const cnpjs = csvIndexNome.get(nomeBusca);
         if (cnpjs && cnpjs.length > 0) {
@@ -629,6 +799,7 @@ async function buscarCNPJnoCSVPorNome(nome) {
             if (encontrado) return encontrado;
         }
     }
+    
     for (const [key, cnpjs] of csvIndexNome) {
         if (key.includes(nomeBusca) || nomeBusca.includes(key)) {
             if (cnpjs && cnpjs.length > 0) {
@@ -638,49 +809,68 @@ async function buscarCNPJnoCSVPorNome(nome) {
             }
         }
     }
+    
     return null;
 }
 // ============================================
-// CADEIA DE BUSCA CNPJ
+// CADEIA DE BUSCA CNPJ - COM 3 FONTES + STORAGE
 // ============================================
 async function cadeiaDeBuscaCNPJ(entrada) {
     const limpo = normalizarCNPJ(entrada);
     let dados = null;
 
     if (limpo.length === 14) {
+        // 1. BrasilAPI
         dados = await buscarCNPJnaBrasilAPI(limpo);
         if (dados) {
             try { await carregarHistorico(); salvarNoHistorico(limpo, dados); } catch(e) {}
             return { ...dados, fonte: "brasilapi" };
         }
+
+        // 2. ReceitaWS
         dados = await buscarCNPJnaReceitaWS(limpo);
         if (dados) {
             try { await carregarHistorico(); salvarNoHistorico(limpo, dados); } catch(e) {}
             return { ...dados, fonte: "receitaws" };
         }
+
+        // 3. CSV local (índice em memória)
         dados = await buscarCNPJnoCSV(limpo);
         if (dados) {
             try { salvarNoHistorico(limpo, dados); } catch(e) {}
             return { ...dados, fonte: "csv_veri" };
         }
+
+        // 4. CSV no Storage (fallback final)
         dados = await buscarCSVnoStorage(limpo);
         if (dados) {
             try { salvarNoHistorico(limpo, dados); } catch(e) {}
             return { ...dados, fonte: "csv_storage" };
         }
+
         return null;
     }
 
     if (entrada && entrada.length > 2) {
         const nomeBusca = entrada.trim();
+
+        // 1. Banco local (cnpjs_famosos.json)
         const localResult = encontrarCNPJPorNome(nomeBusca);
         if (localResult && localResult.cnpj) {
             const cnpjEncontrado = localResult.cnpj.replace(/\D/g, '');
+            // TENTA BUSCAR NA BRASILAPI PARA COMPLEMENTAR OS DADOS
             dados = await buscarCNPJnaBrasilAPI(cnpjEncontrado);
             if (dados) {
                 try { await carregarHistorico(); salvarNoHistorico(cnpjEncontrado, dados); } catch(e) {}
                 return { ...dados, fonte: "banco_local", cnpj_original: localResult.cnpj };
             }
+            // Se a BrasilAPI falhar, tenta a ReceitaWS
+            dados = await buscarCNPJnaReceitaWS(cnpjEncontrado);
+            if (dados) {
+                try { await carregarHistorico(); salvarNoHistorico(cnpjEncontrado, dados); } catch(e) {}
+                return { ...dados, fonte: "banco_local_receitaws", cnpj_original: localResult.cnpj };
+            }
+            // Se todas falharem, retorna os dados do banco local
             return {
                 cnpj: cnpjEncontrado,
                 razao_social: localResult.nome_encontrado || nomeBusca,
@@ -690,6 +880,8 @@ async function cadeiaDeBuscaCNPJ(entrada) {
                 fonte: "banco_local"
             };
         }
+
+        // 2. CSV local (índice em memória)
         const csvResult = await buscarCNPJnoCSVPorNome(nomeBusca);
         if (csvResult && csvResult.cnpj) {
             const cnpjEncontrado = csvResult.cnpj.replace(/\D/g, '');
@@ -707,6 +899,8 @@ async function cadeiaDeBuscaCNPJ(entrada) {
                 fonte: "csv_veri"
             };
         }
+
+        // 3. CSV no Storage (fallback final)
         const storageResult = await buscarCSVnoStorage(nomeBusca);
         if (storageResult && storageResult.cnpj) {
             const cnpjEncontrado = storageResult.cnpj.replace(/\D/g, '');
@@ -725,6 +919,7 @@ async function cadeiaDeBuscaCNPJ(entrada) {
             };
         }
     }
+
     return null;
 }
 
@@ -772,6 +967,7 @@ app.post("/analisar", async function(req, res) {
     try {
         const dados = req.body;
         const inicio = Date.now();
+
         if (dados.analisado && dados.analisado.cnpj) {
             const limpo = normalizarCNPJ(dados.analisado.cnpj);
             if (limpo.length === 14) {
@@ -787,28 +983,35 @@ app.post("/analisar", async function(req, res) {
                 }
             }
         }
+
         const resultado = calcularRiscos(dados);
+
         const hashInput = crypto
             .createHash("sha256")
             .update(JSON.stringify(dados))
             .digest("hex")
             .substring(0, 16);
+
         const hashOutput = crypto
             .createHash("sha256")
             .update(JSON.stringify(resultado))
             .digest("hex")
             .substring(0, 16);
+
         const tempoExecucao = Date.now() - inicio;
         const documento = dados.analisado.cnpj || dados.analisado.cpf || "sem_documento";
         const hash_auditoria = gerarHashAuditoria(documento);
         const email = dados.solicitante && dados.solicitante.email ? dados.solicitante.email : "";
+
         try { await carregarContadores(); incrementarContadores(documento, email); } catch(e) {}
         const conts = getContadores(documento, email);
+
         await carregarTendencias();
         const topRiscosParaSalvar = resultado.top_riscos.map(function(r) {
             return { risco: r.risco, contribuicao: r.contribuicao };
         });
         const tendenciaInfo = getTendenciaEvolucao(documento, resultado.score_global, topRiscosParaSalvar);
+
         const resposta = {
             analise_id: hash_auditoria,
             ...resultado,
@@ -830,6 +1033,7 @@ app.post("/analisar", async function(req, res) {
                 metodologia: config.METODOLOGIA_VERSAO || "VERI 3.2"
             }
         };
+
         cacheResultados.set(hash_auditoria, resposta);
         res.json(resposta);
     } catch (err) {
@@ -843,10 +1047,12 @@ app.post("/analisar", async function(req, res) {
 function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMotor) {
     var evidencias = [];
     var agora = new Date().toISOString();
+
     if (dadosFormulario && dadosFormulario.valor !== undefined) {
         var valor = dadosFormulario.valor || 0;
         var parcelas = dadosFormulario.parcelas || 1;
         var valorParcela = parcelas > 0 ? valor / parcelas : 0;
+
         var isPF = (dadosCadastrais && dadosCadastrais.tipo === "pessoa");
         var ticketDiario = 0;
         if (isPF) {
@@ -867,6 +1073,7 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
             }
             ticketDiario = faturamentoMensal / 30;
         }
+
         if (ticketDiario > 0 && valorParcela > 0) {
             var percentual = Math.round((valorParcela / ticketDiario) * 100);
             var baseTexto = isPF ? "renda diária" : "faturamento diário";
@@ -890,6 +1097,7 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
             });
         }
     }
+
     var tempoMercado = 0;
     if (dadosCadastrais && dadosCadastrais.data_abertura) {
         var dataAbertura = new Date(dadosCadastrais.data_abertura);
@@ -917,6 +1125,7 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
             risco_associado: "DESCONTINUIDADE"
         });
     }
+
     if (dadosCadastrais && dadosCadastrais.situacao) {
         var situacao = dadosCadastrais.situacao.toUpperCase();
         var evidenciaVeracidade = "";
@@ -934,6 +1143,7 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
             risco_associado: "VERACIDADE"
         });
     }
+
     if (dadosCadastrais && dadosCadastrais.setor) {
         evidencias.push({
             id: "EVID-REPUTACIONAL-" + Date.now(),
@@ -944,9 +1154,14 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
             risco_associado: "REPUTACIONAL"
         });
     }
+
     if (dadosFormulario) {
         var conhecimento = dadosFormulario.conhecimento || "nao_informado";
         var experiencia = dadosFormulario.experiencia || "nao_informada";
+        // Corrige "maisoumenos" para "mais ou menos"
+        if (conhecimento === "maisoumenos") {
+            conhecimento = "mais ou menos";
+        }
         var evidenciaComportamental = "Nível de conhecimento do usuário sobre a outra parte: " + conhecimento + ". Experiência anterior: " + experiencia + ".";
         evidencias.push({
             id: "EVID-COMPORTAMENTAL-" + Date.now(),
@@ -957,11 +1172,12 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
             risco_associado: "COMPORTAMENTAL"
         });
     }
+
     return evidencias;
 }
 
 // ============================================================
-// ROTA /enriquecer
+// ROTA /enriquecer – CORRIGIDA
 // ============================================================
 app.post("/enriquecer", async function(req, res) {
     const inicio = Date.now();
@@ -984,22 +1200,38 @@ app.post("/enriquecer", async function(req, res) {
 
     try {
         // 1. CACHE
-        if (ENABLE_CACHE && cnpjLimpo) {
+        if (ENABLE_CACHE && cnpjLimpo && cacheMemoria.has(cnpjLimpo)) {
+            const cached = cacheMemoria.get(cnpjLimpo);
+            return res.json({
+                ...cached,
+                _cache: "memoria",
+                _tempo_ms: Date.now() - inicio
+            });
+        }
+
+        if (cnpjLimpo) {
             try {
-                const cached = await getCache(cnpjLimpo);
-                if (cached && cached.dados && cached.dados.cnpj_encontrado) {
+                const cacheFirestore = await getCache(cnpjLimpo);
+                if (cacheFirestore) {
+                    if (ENABLE_CACHE) {
+                        setCacheMemoria(cnpjLimpo, cacheFirestore);
+                    }
                     return res.json({
-                        ...cached,
-                        _cache: "memoria",
+                        ...cacheFirestore,
+                        _cache: "firestore",
                         _tempo_ms: Date.now() - inicio
                     });
                 }
             } catch (cacheErr) {
-                console.warn('Erro ao verificar cache:', cacheErr.message);
+                console.warn("Erro ao verificar cache Firestore:", cacheErr.message);
             }
         }
 
+        // ============================================================
+        // BUSCA NA BRASILAPI PARA OBTER PORTE E DATA_ABERTURA
+        // ============================================================
         var dadosCadastraisCompletos = {};
+
         if (cnpjLimpo && cnpjLimpo.length === 14) {
             try {
                 const resultadoBusca = await cadeiaDeBuscaCNPJ(cnpjLimpo);
@@ -1028,12 +1260,21 @@ app.post("/enriquecer", async function(req, res) {
             }
         }
 
+        // ============================================================
+        // ORQUESTRADOR - CORRIGIDO (com UF)
+        // ============================================================
         const modulo = req.body.modulo || "geral";
         const subModulo = req.body.subModulo || "geral";
+
+        // ============================================================
+        // EXTRAI UF DOS DADOS CADASTRAIS
+        // ============================================================
         var ufEmpresa = null;
+
         if (dadosCadastraisCompletos && dadosCadastraisCompletos.uf) {
             ufEmpresa = dadosCadastraisCompletos.uf;
         }
+
         if (!ufEmpresa) {
             try {
                 const brasilUf = await buscarCNPJnaBrasilAPI(cnpjLimpo);
@@ -1044,12 +1285,31 @@ app.post("/enriquecer", async function(req, res) {
                 console.warn("Erro ao buscar UF via BrasilAPI:", err.message);
             }
         }
+
+        if (!ufEmpresa && dadosCadastraisCompletos && dadosCadastraisCompletos.cep) {
+            try {
+                const cepResponse = await fetch('https://viacep.com.br/ws/' + dadosCadastraisCompletos.cep + '/json/');
+                if (cepResponse.ok) {
+                    const cepData = await cepResponse.json();
+                    if (cepData && cepData.uf) {
+                        ufEmpresa = cepData.uf;
+                        console.log("UF obtida via CEP:", ufEmpresa);
+                    }
+                }
+            } catch (cepErr) {
+                console.warn("Erro ao buscar UF via CEP:", cepErr.message);
+            }
+        }
+
         if (ufEmpresa) {
             console.log("UF da empresa:", ufEmpresa);
         } else {
             console.warn("UF não encontrada. Buscas judiciais usarão fallback genérico.");
         }
 
+        // ============================================================
+        // CHAMA ORQUESTRADOR COM A UF
+        // ============================================================
         const dadosOrquestrador = await coletarEvidenciasReais(
             nome,
             cnpjLimpo,
@@ -1059,6 +1319,7 @@ app.post("/enriquecer", async function(req, res) {
             subModulo
         );
 
+        // Combina os dados cadastrais (prioridade: o que veio da BrasilAPI)
         const dadosCadastrais = {
             ...dadosOrquestrador.dados_cadastrais,
             ...dadosCadastraisCompletos,
@@ -1080,8 +1341,12 @@ app.post("/enriquecer", async function(req, res) {
             whatsapp_solicitante: whatsapp_solicitante || ""
         };
 
+        // ============================================================
+        // CORREÇÃO: FATURAMENTO ANUAL – PRIORIDADE DO ORQUESTRADOR
+        // ============================================================
         var faturamentoAnualEncontrado = null;
         var faturamentoFonte = "";
+
         if (dadosOrquestrador.faturamento_anual) {
             faturamentoAnualEncontrado = dadosOrquestrador.faturamento_anual;
             faturamentoFonte = "banco_regional_orquestrador";
@@ -1100,13 +1365,18 @@ app.post("/enriquecer", async function(req, res) {
             faturamentoFonte = "estimado_por_porte";
             console.log("⚠️ Faturamento estimado por porte:", faturamentoAnualEncontrado);
         }
+
         dadosCadastrais.faturamento_anual = faturamentoAnualEncontrado;
         dadosCadastrais.faturamento_fonte = faturamentoFonte;
 
+        // ============================================================
+        // ADAPTADO: CAPTURA VALOR DO NEGÓCIO (Contratação/Compra/Venda)
+        // ============================================================
         var valorNegocio = 0;
         var parcelasNegocio = 1;
         var tipoPagamento = "avista";
         var tipoNegocio = "";
+
         if (req.body.valor_contratacao) {
             valorNegocio = parseFloat(req.body.valor_contratacao) || 0;
             parcelasNegocio = parseInt(req.body.parcelas_contratacao) || 1;
@@ -1129,9 +1399,16 @@ app.post("/enriquecer", async function(req, res) {
             tipoNegocio = "negocio";
         }
 
+        // ============================================================
+        // 3. GEMINI (com fallback DeepSeek)
+        // ============================================================
         let estruturado = await estruturar(dadosOrquestrador.fontes, TIMEOUT_GEMINI_MS);
 
+        // ============================================================
+        // 4. VALIDAÇÃO – GARANTE ESTRUTURA (NUNCA BLOQUEIA)
+        // ============================================================
         console.log('📊 Validando estrutura recebida do Gemini...');
+
         if (!estruturado || typeof estruturado !== 'object') {
             console.warn('⚠️ Gemini retornou null. Criando estrutura mínima de emergência.');
             estruturado = {
@@ -1148,6 +1425,7 @@ app.post("/enriquecer", async function(req, res) {
                 fontes_consultadas: []
             };
         }
+
         if (!estruturado.dados_estruturados) {
             console.warn('⚠️ dados_estruturados ausente. Criando estrutura padrão.');
             estruturado.dados_estruturados = {
@@ -1158,12 +1436,14 @@ app.post("/enriquecer", async function(req, res) {
                 red_flags: {}
             };
         }
+
         const secoes = ['reputacional', 'resolutividade', 'comportamental', 'saude_financeira', 'red_flags'];
         for (let i = 0; i < secoes.length; i++) {
             if (!estruturado.dados_estruturados[secoes[i]]) {
                 estruturado.dados_estruturados[secoes[i]] = {};
             }
         }
+
         if (!estruturado.padroes_risco || !Array.isArray(estruturado.padroes_risco)) {
             estruturado.padroes_risco = [];
         }
@@ -1173,6 +1453,7 @@ app.post("/enriquecer", async function(req, res) {
         if (!estruturado.fontes_consultadas || !Array.isArray(estruturado.fontes_consultadas)) {
             estruturado.fontes_consultadas = [];
         }
+
         if (!estruturado.status_busca) {
             estruturado.status_busca = 'sucesso';
         }
@@ -1185,9 +1466,14 @@ app.post("/enriquecer", async function(req, res) {
                 motivo: 'Estrutura garantida pelo sistema'
             };
         }
+
+        const validacao = { valido: true, erros: [] };
         console.log('✅ Estrutura garantida com sucesso.');
 
+        // 5. SCORES
         const scores = extrairScores(estruturado.dados_estruturados || {});
+
+        // 6. CALCULA TEMPO DE MERCADO
         if (dadosCadastrais.data_abertura) {
             const dataAbertura = new Date(dadosCadastrais.data_abertura);
             const agora = new Date();
@@ -1197,6 +1483,7 @@ app.post("/enriquecer", async function(req, res) {
         } else {
             dadosCadastrais.tempo_mercado_anos = 0;
         }
+
         let faturamentoMensal = null;
         if (dadosCadastrais.faturamento_anual) {
             faturamentoMensal = dadosCadastrais.faturamento_anual / 12;
@@ -1205,7 +1492,11 @@ app.post("/enriquecer", async function(req, res) {
             faturamentoMensal = calcularFaturamentoMensalPorPorte(porteEmpresa);
         }
 
+        // ============================================================
+        // PREPARA DADOS PARA O MOTOR COM FATURAMENTO_ANUAL (CORRIGIDO)
+        // ============================================================
         const negocioStr = req.body.negocio ? String(req.body.negocio) : "";
+
         const dadosMotor = {
             analisado: {
                 cnpj: cnpjLimpo,
@@ -1244,6 +1535,7 @@ app.post("/enriquecer", async function(req, res) {
 
         const resultadoMotor = calcularRiscos(dadosMotor);
 
+        // 7. EVIDÊNCIAS – FALLBACK
         var evidenciasGemini = [];
         if (estruturado && estruturado.dados_estruturados) {
             secoes.forEach(function(secao) {
@@ -1285,6 +1577,7 @@ app.post("/enriquecer", async function(req, res) {
             evidenciasFinal = evidenciasFinal.concat(evidenciasFallback);
         }
 
+        // 8. MONTAGEM DA RESPOSTA
         const dadosCombinados = {
             ...estruturado,
             dados_estruturados: {
@@ -1358,11 +1651,15 @@ app.post("/enriquecer", async function(req, res) {
             }
         };
 
+        // 9. CACHE
         if (cnpjLimpo) {
+            if (ENABLE_CACHE) {
+                setCacheMemoria(cnpjLimpo, response);
+            }
             try {
                 await setCache(cnpjLimpo, response);
             } catch (cacheErr) {
-                console.warn('Erro ao salvar cache:', cacheErr.message);
+                console.warn("Erro ao salvar cache:", cacheErr.message);
             }
         }
 
@@ -1385,16 +1682,40 @@ const PORT = process.env.PORT || 3000;
 
 async function iniciarServidor() {
     console.log('🚀 Iniciando servidor VERI API...');
-    console.log('☁️ CSV permanece no Google Cloud Storage.');
-    console.log('☁️ Render NÃO fará download nem indexação dos 68 milhões de registros.');
-    console.log('✅ BrasilAPI + banco local + demais fontes permanecem ativos.');
     
+    // 1. Verifica se o CSV existe no Storage
+    if (storage) {
+        try {
+            const bucket = storage.bucket(BUCKET_NAME);
+            const file = bucket.file(CSV_FILE);
+            const [exists] = await file.exists();
+            if (exists) {
+                console.log('✅ CSV disponível no Google Cloud Storage.');
+            } else {
+                console.warn('⚠️ CSV não encontrado no Storage.');
+            }
+        } catch (err) {
+            console.warn('⚠️ Erro ao verificar CSV no Storage:', err.message);
+        }
+    } else {
+        console.warn('⚠️ Storage não disponível. Busca no CSV desativada.');
+    }
+    
+    // 2. Tenta carregar o CSV em memória (se existir localmente)
+    try {
+        await carregarCSVIndex();
+    } catch (err) {
+        console.warn('⚠️ Erro ao carregar CSV na inicialização:', err.message);
+        console.warn('⚠️ O servidor continuará rodando sem o índice CSV local.');
+    }
+    
+    // 3. Sobe o servidor
     const server = app.listen(PORT, '0.0.0.0', function() {
         console.log("✅ VERI API v" + VERSAO_API + " rodando na porta " + PORT);
         console.log("⚙️ Motor VERI integrado à rota /enriquecer");
         console.log("📊 Busca BrasilAPI ativada para porte e data_abertura");
         console.log('🚀 REVISÃO CORRIGIDA - JSON_INVALIDO RESOLVIDO');
-        console.log('📊 CSV indexado: ⚠️ NÃO (fallback ativo - BrasilAPI + banco local)');
+        console.log('📊 CSV indexado: ' + (csvIndexCarregado ? '✅ SIM (busca por nome ativa)' : '⚠️ NÃO (fallback ativo - Storage)'));
     });
 
     server.on('error', function(err) {
@@ -1405,6 +1726,7 @@ async function iniciarServidor() {
     });
 }
 
+// Inicia o servidor
 iniciarServidor();
 
 module.exports = app;

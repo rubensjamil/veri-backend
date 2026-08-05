@@ -1,11 +1,21 @@
 // ============================================================
 // veri.engine.js - Motor VERI (único e soberano)
 // 10 fatores de risco - PESOS E METODOLOGIA
+// CORRIGIDO: ticket para compra usa SOLICITANTE, venda usa ANALISADO
+// CORRIGIDO: topRiscos sempre inclui FINANCEIRO + 3 maiores
+// CORRIGIDO: percentual de comprometimento usa faturamento REAL
+// CORRIGIDO: RISCO ENTRE AS PARTES com fallback inteligente
+// ADAPTADO: Valor da Contratação/Compra/Venda
+// CORRIGIDO: Percentual de comprometimento para PF usa renda mensal
+// CORRIGIDO: Cálculo do ticketDiario com fallback por porte
 // ============================================================
 
 const config = require('../../motor.config.js');
 const metodologia = require('../../motor.metodologia.js');
 
+// ============================================
+// MAPEAMENTO DE PORTAS (INTERNO)
+// ============================================
 const DESCRICAO_PORTAS = {
     'empresa_fornecedor': 'Fornecedor',
     'empresa_loja': 'Loja',
@@ -20,6 +30,10 @@ const DESCRICAO_PORTAS = {
     'leads_unico': 'Leads',
     'lotes_unico': 'Lotes'
 };
+
+// ============================================
+// FUNÇÕES DE CÁLCULO POR FATOR
+// ============================================
 
 function calcularFinanceiro(dados) {
     const { analisado, solicitante, negocio, relacionamento } = dados;
@@ -115,6 +129,10 @@ function calcularFinanceiro(dados) {
         fonte: fonte
     };
 }
+
+// ============================================
+// DEMAIS FUNÇÕES (MANTIDAS)
+// ============================================
 
 function calcularDescontinuidade(dados) {
     const { analisado } = dados;
@@ -248,6 +266,10 @@ function calcularRelacional(dados) {
     };
 }
 
+// ============================================
+// FUNÇÕES AUXILIARES
+// ============================================
+
 function calcularTicketDiario(porte) {
     const anual = config.FATURAMENTO_ANUAL[porte] || 0;
     return anual ? Math.round(anual / 12 / 30) : 0;
@@ -265,6 +287,10 @@ function getNivelRisco(contrib) {
     if (contrib >= niveis.MEDIO) return 'MEDIO';
     return 'BAIXO';
 }
+
+// ============================================
+// FUNÇÃO PRINCIPAL: calcularRiscos
+// ============================================
 
 function calcularRiscos(dados) {
     const situacaoRaw = (dados.analisado && dados.analisado.situacao) ? dados.analisado.situacao.toUpperCase() : 'ATIVA';
@@ -343,6 +369,9 @@ function calcularRiscos(dados) {
     const deterioracaoResult = calcularDeterioracao(dados);
     const relacionalResult = calcularRelacional(dados);
 
+    // ============================================================
+    // CORREÇÃO: PERCENTUAL DE COMPROMETIMENTO com faturamento REAL
+    // ============================================================
     var percentualComprometimento = 0;
     var valorNegocio = dados.negocio.valor || 0;
     var parcelas = dados.negocio.parcelas || 1;
@@ -356,24 +385,48 @@ function calcularRiscos(dados) {
     var isVenda = negocioStr.startsWith('vender');
 
     var ticketDiario = 0;
+    // Para compra: base é o solicitante
     if (isCompra) {
-        if (dados.solicitante.tipo === 'pessoa' && dados.solicitante.renda) {
+        if (dados.solicitante.tipo === 'pessoa' && dados.solicitante.renda && dados.solicitante.renda > 0) {
             ticketDiario = dados.solicitante.renda / 30;
-        } else if (dados.solicitante.tipo === 'empresa' && dados.solicitante.faturamento_anual) {
+        } else if (dados.solicitante.tipo === 'empresa' && dados.solicitante.faturamento_anual && dados.solicitante.faturamento_anual > 0) {
             ticketDiario = dados.solicitante.faturamento_anual / 12 / 30;
+        } else if (dados.solicitante.tipo === 'empresa') {
+            // Fallback: usa o faturamento estimado por porte
+            const faturamentoAnualPorPorte = {
+                "MEI": 81000,
+                "ME": 360000,
+                "EPP": 4800000,
+                "MEDIO": 12000000,
+                "GRANDE": 50000000,
+                "DEMAIS": 50000000
+            };
+            ticketDiario = (faturamentoAnualPorPorte[dados.solicitante.porte] || faturamentoAnualPorPorte["GRANDE"]) / 12 / 30;
         } else {
-            ticketDiario = financeiroResult.ticket_estimado || 0;
+            ticketDiario = financeiroResult.ticket_estimado || 1000;
         }
     } else if (isVenda) {
-        if (dados.analisado.tipo === 'pessoa' && dados.analisado.renda) {
+        // Para venda: base é o analisado
+        if (dados.analisado.tipo === 'pessoa' && dados.analisado.renda && dados.analisado.renda > 0) {
             ticketDiario = dados.analisado.renda / 30;
-        } else if (dados.analisado.tipo === 'empresa' && dados.analisado.faturamento_anual) {
+        } else if (dados.analisado.tipo === 'empresa' && dados.analisado.faturamento_anual && dados.analisado.faturamento_anual > 0) {
             ticketDiario = dados.analisado.faturamento_anual / 12 / 30;
+        } else if (dados.analisado.tipo === 'empresa') {
+            // Fallback: usa o faturamento estimado por porte
+            const faturamentoAnualPorPorte = {
+                "MEI": 81000,
+                "ME": 360000,
+                "EPP": 4800000,
+                "MEDIO": 12000000,
+                "GRANDE": 50000000,
+                "DEMAIS": 50000000
+            };
+            ticketDiario = (faturamentoAnualPorPorte[dados.analisado.porte] || faturamentoAnualPorPorte["GRANDE"]) / 12 / 30;
         } else {
-            ticketDiario = financeiroResult.ticket_estimado || 0;
+            ticketDiario = financeiroResult.ticket_estimado || 1000;
         }
     } else {
-        ticketDiario = financeiroResult.ticket_estimado || 0;
+        ticketDiario = financeiroResult.ticket_estimado || 1000;
     }
 
     if (ticketDiario > 0 && valorParcela > 0) {
@@ -421,6 +474,9 @@ function calcularRiscos(dados) {
         recomendacao = 'ATENCAO';
     }
 
+    // ============================================================
+    // TOP RISCOS: FINANCEIRO SEMPRE + 3 MAIORES DOS DEMAIS
+    // ============================================================
     var financeiroObj = null;
     var demaisRiscos = [];
 
