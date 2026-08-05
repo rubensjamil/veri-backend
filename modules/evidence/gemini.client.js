@@ -1,6 +1,11 @@
 // ============================================================
 // gemini.client.js - Cliente Gemini com fallback para DeepSeek
 // VERSÃO DEFINITIVA - CONSOLIDADA
+// CORRIGIDO: Modelos atualizados para versões pagas disponíveis
+// CORRIGIDO: gemini-2.5-flash-lite como principal (mais barato)
+// CORRIGIDO: gemini-2.5-flash como fallback (custo moderado)
+// CORRIGIDO: Removidos modelos Pro e 3.5 (muito caros)
+// CORRIGIDO: Lê chave da variável GEMINI_API_KEY (não GOOGLE_API_KEY)
 // ============================================================
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
@@ -8,7 +13,9 @@ const { HarmCategory, HarmBlockThreshold } = require("@google/generative-ai");
 const axios = require('axios');
 
 const MODELOS_GEMINI = [
-    'gemini-1.5-flash-latest'
+    'gemini-2.5-flash-lite',  // ← Principal (mais barato: $0.10/$0.40)
+    'gemini-2.5-flash'        // ← Fallback (custo moderado: $0.30/$2.50)
+    // NÃO USAR: gemini-3.5-flash, gemini-2.5-pro (muito caros)
 ];
 
 const VERSAO_PROMPT = 'v11';
@@ -228,9 +235,10 @@ async function estruturar(fontes, timeoutMs) {
 }
 
 async function tentarGemini(modelo, dados, timeoutMs) {
-    const apiKey = process.env.GOOGLE_API_KEY;
+    // 🔧 CORRIGIDO: Lê a chave da variável GEMINI_API_KEY (não GOOGLE_API_KEY)
+    const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-        console.warn('GOOGLE_API_KEY nao configurada.');
+        console.warn('GEMINI_API_KEY nao configurada.');
         return null;
     }
 
