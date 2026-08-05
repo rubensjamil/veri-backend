@@ -4,7 +4,6 @@ async function googleSearch(query) {
     if (!query) return [];
 
     try {
-        // Nomes de variáveis corrigidos para coincidir com o deploy
         const apiKey = process.env.GOOGLE_API_KEY;
         const cx = process.env.GOOGLE_CSE_ID;
 
@@ -20,10 +19,15 @@ async function googleSearch(query) {
                 key: apiKey,
                 cx: cx,
                 q: query,
-                num: 5
+                num: 10
             },
             timeout: 4500
         });
+
+        if (res.data && res.data.error) {
+            console.warn('Google Search API error:', res.data.error.message);
+            return [];
+        }
 
         return (res.data.items || []).map(function(item) {
             return {
@@ -34,7 +38,11 @@ async function googleSearch(query) {
             };
         });
     } catch (err) {
-        console.warn('Erro no Google Search:', err.message);
+        if (err.response && err.response.status === 429) {
+            console.warn('Google Search quota exceeded (429)');
+        } else {
+            console.warn('Erro no Google Search:', err.message);
+        }
         return [];
     }
 }

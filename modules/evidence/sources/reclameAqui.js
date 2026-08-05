@@ -8,6 +8,12 @@ async function buscarReclameAqui(nome) {
         var url = 'https://www.reclameaqui.com.br/rss/' + encodeURIComponent(nome);
         var response = await axios.get(url, { timeout: 4000 });
         
+        // Verifica se a resposta é XML válido
+        if (!response.data || !response.data.trim().startsWith('<?xml')) {
+            console.warn('Reclame Aqui: resposta não é XML válido');
+            return [];
+        }
+        
         var parser = new xml2js.Parser();
         var result = await parser.parseStringPromise(response.data);
         
@@ -19,6 +25,7 @@ async function buscarReclameAqui(nome) {
                 descricao: item.description?.[0] || '',
                 status: item['reclameaqui:status']?.[0] || 'desconhecido',
                 data: item.pubDate?.[0] || new Date().toISOString(),
+                url: item.link?.[0] || '',
                 source: 'reclame_aqui'
             };
         });

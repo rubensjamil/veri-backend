@@ -27,6 +27,7 @@
 // CORRIGIDO: Caminho do Secret File atualizado para google-creds.json
 // CORRIGIDO: Erro de sintaxe na linha 291 (crases no console.log)
 // CORRIGIDO: Busca no Storage para razão social e fallback de CNPJ
+// CORRIGIDO: DEMAIS substituído por GIGANTE em todos os lugares
 // ============================================
 
 const express = require("express");
@@ -610,7 +611,7 @@ function calcularFaturamentoMensalPorPorte(porte) {
         "EPP": 4800000,
         "MEDIO": 12000000,
         "GRANDE": 50000000,
-        "DEMAIS": 50000000
+        "GIGANTE": 50000000
     };
     return (faturamentoAnual[porte] || faturamentoAnual["GRANDE"]) / 12;
 }
@@ -1040,7 +1041,6 @@ app.post("/analisar", async function(req, res) {
         res.status(500).json({ error: err.message });
     }
 });
-
 // ============================================================
 // FUNÇÃO: GERAR EVIDÊNCIAS DE FALLBACK
 // ============================================================
@@ -1067,7 +1067,7 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
                     "EPP": 4800000,
                     "MEDIO": 12000000,
                     "GRANDE": 50000000,
-                    "DEMAIS": 50000000
+                    "GIGANTE": 50000000
                 };
                 faturamentoMensal = (faturamentoAnual[dadosCadastrais.porte] || faturamentoAnual["GRANDE"]) / 12;
             }
@@ -1158,7 +1158,6 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
     if (dadosFormulario) {
         var conhecimento = dadosFormulario.conhecimento || "nao_informado";
         var experiencia = dadosFormulario.experiencia || "nao_informada";
-        // Corrige "maisoumenos" para "mais ou menos"
         if (conhecimento === "maisoumenos") {
             conhecimento = "mais ou menos";
         }
@@ -1359,7 +1358,7 @@ app.post("/enriquecer", async function(req, res) {
                 "EPP": 4800000,
                 "MEDIO": 12000000,
                 "GRANDE": 50000000,
-                "DEMAIS": 50000000
+                "GIGANTE": 50000000
             };
             faturamentoAnualEncontrado = faturamentoAnualPorPorte[porteEmpresa] || faturamentoAnualPorPorte["GRANDE"];
             faturamentoFonte = "estimado_por_porte";

@@ -1,6 +1,7 @@
 // ============================================================
 // orchestrator.js - Orquestra fontes de dados REAIS para a VERI
 // VERSÃO DEFINITIVA 4.0.11 - CORREÇÃO DE SINTAXE
+// CORRIGIDO: DEMAIS substituído por GIGANTE
 // ============================================================
 
 const { googleSearch } = require('./sources/googleSearch');

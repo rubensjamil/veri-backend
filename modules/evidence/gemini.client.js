@@ -8,7 +8,7 @@ const { HarmCategory, HarmBlockThreshold } = require("@google/generative-ai");
 const axios = require('axios');
 
 const MODELOS_GEMINI = [
-    'gemini-flash-latest'
+    'gemini-1.5-flash-latest'
 ];
 
 const VERSAO_PROMPT = 'v11';
@@ -16,7 +16,7 @@ const VERSAO_SCHEMA = '1.5';
 const TIMEOUT_MS = 45000;
 
 const PROMPT_EVIDENCIAS = `
-Extraia evidencias relevantes das fontes fornecidas, não busque indefinidamente evidencias, a medida que for encontrando vá entregando sendo no minimo uma e no máximo 3 evidencias, priorize eviencias de fraudes, investigação policial e de investimentos e evidencias de crescimento, melhorias e, ou deterioração de imagem da analisada.
+Extraia evidencias relevantes das fontes fornecidas, nao busque indefinidamente evidencias, a medida que for encontrando va entregando sendo no minimo uma e no maximo 3 evidencias, priorize evidencias de fraudes, investigacao policial e de investimentos e evidencias de crescimento, melhorias e, ou deterioracao de imagem da analisada.
 
 Cada evidencia deve ter:
 - titulo (resumo)
@@ -42,11 +42,11 @@ function extrairJSON(texto) {
     texto = texto.trim();
 
     if (texto.startsWith("json")) {
-        texto = texto.replace(/^json\s*/, "");
+        texto = texto.replace(/json\s*/, "");
         texto = texto.replace(/\s*$/, "");
         texto = texto.trim();
     } else if (texto.startsWith("")) {
-        texto = texto.replace(/^\s*/, "");
+        texto = texto.replace(/\s*/, "");
         texto = texto.replace(/\s*$/, "");
         texto = texto.trim();
     }
@@ -392,10 +392,10 @@ function prepararDadosParaPrompt(fontes) {
     if (fontes.noticias && fontes.noticias.length > 0) {
         dados.noticias = fontes.noticias.slice(0, 3).map(function(item) {
             return {
-                titulo: (item.title || '').substring(0, 100),
-                snippet: (item.snippet || '').substring(0, 200),
-                link: item.link || '',
-                data: item.publishedAt || ''
+                titulo: (item.titulo || item.title || '').substring(0, 100),
+                snippet: (item.descricao || item.snippet || '').substring(0, 200),
+                link: item.url || item.link || '',
+                data: item.data || item.publishedAt || ''
             };
         });
     }

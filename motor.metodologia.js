@@ -70,7 +70,7 @@ module.exports = {
         },
         INTEGRIDADE: {
             GRANDE: 0,
-            DEMAIS: 0,
+            GIGANTE: 0,
             DEFAULT: 50
         }
     },

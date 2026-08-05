@@ -8,6 +8,7 @@
 // ADAPTADO: Valor da Contratação/Compra/Venda
 // CORRIGIDO: Percentual de comprometimento para PF usa renda mensal
 // CORRIGIDO: Cálculo do ticketDiario com fallback por porte
+// CORRIGIDO: DEMAIS substituído por GIGANTE
 // ============================================================
 
 const config = require('../../motor.config.js');
@@ -193,7 +194,7 @@ function calcularIntegridade(dados) {
     const regras = metodologia.REGRAS.INTEGRIDADE;
     let integridade = config.DEFAULTS.INTEGRIDADE;
 
-    if (porteAnalisado === 'GRANDE' || porteAnalisado === 'DEMAIS') {
+    if (porteAnalisado === 'GRANDE' || porteAnalisado === 'GIGANTE') {
         integridade = regras.GRANDE;
     }
     if (!porteAnalisado) {
@@ -241,7 +242,8 @@ function calcularRelacional(dados) {
             else if (faturamento <= 360000) porteAnalisado = 'ME';
             else if (faturamento <= 4800000) porteAnalisado = 'EPP';
             else if (faturamento <= 12000000) porteAnalisado = 'MEDIO';
-            else porteAnalisado = 'GRANDE';
+            else if (faturamento <= 50000000) porteAnalisado = 'GRANDE';
+            else porteAnalisado = 'GIGANTE';
         } else {
             porteAnalisado = 'MEDIO';
         }
@@ -399,7 +401,7 @@ function calcularRiscos(dados) {
                 "EPP": 4800000,
                 "MEDIO": 12000000,
                 "GRANDE": 50000000,
-                "DEMAIS": 50000000
+                "GIGANTE": 50000000
             };
             ticketDiario = (faturamentoAnualPorPorte[dados.solicitante.porte] || faturamentoAnualPorPorte["GRANDE"]) / 12 / 30;
         } else {
@@ -419,7 +421,7 @@ function calcularRiscos(dados) {
                 "EPP": 4800000,
                 "MEDIO": 12000000,
                 "GRANDE": 50000000,
-                "DEMAIS": 50000000
+                "GIGANTE": 50000000
             };
             ticketDiario = (faturamentoAnualPorPorte[dados.analisado.porte] || faturamentoAnualPorPorte["GRANDE"]) / 12 / 30;
         } else {

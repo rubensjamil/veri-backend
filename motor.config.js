@@ -4,7 +4,7 @@
 
 module.exports = {
     // Timeouts e limites operacionais
-    TIMEOUT_GEMINI_MS: 10000,
+    TIMEOUT_GEMINI_MS: 45000,
     CACHE_MEMORIA_MAX: 200,
 
     // Limites de recomendação
@@ -21,7 +21,7 @@ module.exports = {
         'EPP': 3,
         'MEDIO': 4,
         'GRANDE': 5,
-        'DEMAIS': 5
+        'GIGANTE': 5
     },
 
     // Faturamento anual por porte
@@ -31,7 +31,7 @@ module.exports = {
         'EPP': 4800000,
         'MEDIO': 12000000,
         'GRANDE': 50000000,
-        'DEMAIS': 50000000
+        'GIGANTE': 50000000
     },
 
     // Níveis de risco
