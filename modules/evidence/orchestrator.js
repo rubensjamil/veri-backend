@@ -1,8 +1,9 @@
 // ============================================================
 // orchestrator.js - Orquestra fontes de dados REAIS para a VERI
-// VERSÃO DEFINITIVA 4.0.12 - CORREÇÃO DE SINTAXE
+// VERSÃO DEFINITIVA 4.0.13 - CORREÇÃO DE SINTAXE
 // CORRIGIDO: DEMAIS substituído por GIGANTE
 // CORRIGIDO: Faturamento do banco local preservado
+// CORRIGIDO: Fallback para CSV no Google Cloud Storage
 // CORRIGIDO: Logs adicionados para rastrear faturamento
 // ============================================================
 
@@ -13,6 +14,145 @@ const { buscarNoticias } = require('./sources/noticias');
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
+const { Storage } = require('@google-cloud/storage');
+
+// ============================================================
+// CONFIGURA STORAGE PARA ACESSAR O CSV
+// ============================================================
+let storage = null;
+let credenciaisCarregadas = false;
+
+const secretPath = '/etc/secrets/google-creds.json';
+if (fs.existsSync(secretPath)) {
+    try {
+        const credsContent = fs.readFileSync(secretPath, 'utf8');
+        const creds = JSON.parse(credsContent);
+        storage = new Storage({
+            projectId: creds.project_id,
+            credentials: {
+                client_email: creds.client_email,
+                private_key: creds.private_key
+            }
+        });
+        console.log('✅ Storage inicializado no orchestrator com credenciais do Secret File.');
+        credenciaisCarregadas = true;
+    } catch (err) {
+        console.error('❌ Erro ao processar credencial no orchestrator:', err.message);
+        storage = null;
+    }
+} else {
+    console.error('❌ Secret File NÃO ENCONTRADO no orchestrator em:', secretPath);
+    storage = null;
+}
+
+const BUCKET_NAME = "veri-cnpj-dados";
+const CSV_FILE = "cnpj_busca_6_colunas.csv";
+
+// ============================================================
+// BUSCA NO CSV DIRETAMENTE NO STORAGE
+// ============================================================
+async function buscarCSVnoStorage(termo) {
+    if (!storage) {
+        console.warn('⚠️ Storage não disponível no orchestrator.');
+        return null;
+    }
+    
+    try {
+        const bucket = storage.bucket(BUCKET_NAME);
+        const file = bucket.file(CSV_FILE);
+        const [exists] = await file.exists();
+        
+        if (!exists) {
+            console.warn('⚠️ CSV não encontrado no Storage.');
+            return null;
+        }
+        
+        console.log('🔍 Buscando no Storage por:', termo);
+        
+        const stream = file.createReadStream();
+        const csv = require('csv-parser');
+        
+        return new Promise((resolve, reject) => {
+            let encontrado = null;
+            let contador = 0;
+            let timeoutId = setTimeout(() => {
+                stream.destroy();
+                resolve(null);
+            }, 15000);
+            
+            stream
+                .pipe(csv())
+                .on('data', (row) => {
+                    contador++;
+                    
+                    // Busca por CNPJ exato
+                    if (termo.length === 14) {
+                        const cnpjRow = row.CNPJ ? row.CNPJ.replace(/\D/g, '') : '';
+                        if (cnpjRow === termo) {
+                            encontrado = {
+                                cnpj: row.CNPJ,
+                                razao_social: row["RAZAO SOCIAL"] || row.razao_social || "",
+                                nome_fantasia: row["NOME FANTASIA"] || row.nome_fantasia || "",
+                                porte: row.PORTE || row.porte || "",
+                                data_abertura: row["DATA DE ABERTURA"] || row.data_abertura || "",
+                                situacao: row["SITUACAO"] || row.situacao || "ATIVA",
+                                uf: row.UF || "",
+                                municipio: row.MUNICIPIO || "",
+                                fonte: "csv_storage"
+                            };
+                            clearTimeout(timeoutId);
+                            stream.destroy();
+                            resolve(encontrado);
+                            return;
+                        }
+                    }
+                    
+                    // Busca por razão social ou nome fantasia (fallback)
+                    if (termo.length > 2) {
+                        const razao = (row["RAZAO SOCIAL"] || row.razao_social || "").toLowerCase();
+                        const fantasia = (row["NOME FANTASIA"] || row.nome_fantasia || "").toLowerCase();
+                        const busca = termo.toLowerCase();
+                        
+                        if (razao.includes(busca) || fantasia.includes(busca)) {
+                            encontrado = {
+                                cnpj: row.CNPJ,
+                                razao_social: row["RAZAO SOCIAL"] || row.razao_social || "",
+                                nome_fantasia: row["NOME FANTASIA"] || row.nome_fantasia || "",
+                                porte: row.PORTE || row.porte || "",
+                                data_abertura: row["DATA DE ABERTURA"] || row.data_abertura || "",
+                                situacao: row["SITUACAO"] || row.situacao || "ATIVA",
+                                uf: row.UF || "",
+                                municipio: row.MUNICIPIO || "",
+                                fonte: "csv_storage"
+                            };
+                            clearTimeout(timeoutId);
+                            stream.destroy();
+                            resolve(encontrado);
+                            return;
+                        }
+                    }
+                    
+                    if (contador > 100000) {
+                        clearTimeout(timeoutId);
+                        stream.destroy();
+                        resolve(null);
+                    }
+                })
+                .on('end', () => {
+                    clearTimeout(timeoutId);
+                    resolve(encontrado);
+                })
+                .on('error', (err) => {
+                    clearTimeout(timeoutId);
+                    console.warn('⚠️ Erro ao ler CSV do Storage:', err.message);
+                    resolve(null);
+                });
+        });
+    } catch (err) {
+        console.warn('⚠️ Erro ao buscar no CSV:', err.message);
+        return null;
+    }
+}
 
 function normalizarDocumento(doc) {
     if (!doc) return '';
@@ -35,7 +175,7 @@ try {
     console.warn('⚠️ cnpjs_famosos.json não encontrado ou inválido. Banco local desativado.');
 }
 
-const VERSAO_ORQUESTRADOR = '4.0.12';
+const VERSAO_ORQUESTRADOR = '4.0.13';
 const FONTES_UTILIZADAS = [
     'Google Search',
     'BrasilAPI',
@@ -45,7 +185,8 @@ const FONTES_UTILIZADAS = [
     'Consumidor.gov',
     'Busca de CNPJ por nome',
     'Protestos (Centroprot)',
-    'Banco local de CNPJs famosos'
+    'Banco local de CNPJs famosos',
+    'CSV Storage (fallback)'
 ];
 
 const TIMEOUTS = {
@@ -725,9 +866,30 @@ async function coletarEvidenciasReais(nome, cnpj, cpf, uf, modulo, subModulo) {
         }
     }
 
+    // ============================================================
+    // 🔧 CORREÇÃO PRINCIPAL: FALLBACK PARA CSV NO STORAGE
+    // ============================================================
     if (cnpjEncontrado && (!dadosCadastrais || (dadosCadastrais && dadosCadastrais.fonte_cnpj === 'banco_local'))) {
         console.log('🔍 Buscando dados complementares para CNPJ:', cnpjEncontrado);
+        
+        // 1. Tenta BrasilAPI
         var dadosCadastraisCompletos = await consultarReceita(cnpjEncontrado);
+        
+        // 2. Se falhar, tenta CSV no Storage
+        if (!dadosCadastraisCompletos) {
+            console.log('⚠️ BrasilAPI falhou, tentando CSV no Storage...');
+            dadosCadastraisCompletos = await buscarCSVnoStorage(cnpjEncontrado);
+            if (dadosCadastraisCompletos) {
+                console.log('✅ CSV Storage retornou dados para CNPJ:', cnpjEncontrado);
+            }
+        }
+        
+        // 3. Se ainda falhar, tenta ReceitaWS
+        if (!dadosCadastraisCompletos) {
+            console.log('⚠️ CSV Storage falhou, tentando ReceitaWS...');
+            dadosCadastraisCompletos = await buscarCNPJnaReceitaWS(cnpjEncontrado);
+        }
+        
         if (dadosCadastraisCompletos) {
             // 🔧 CORREÇÃO: Preservar faturamento do banco local
             if (faturamentoDoBanco) {
@@ -741,10 +903,10 @@ async function coletarEvidenciasReais(nome, cnpj, cpf, uf, modulo, subModulo) {
             dadosCadastrais = dadosCadastraisCompletos;
             porteEncontrado = dadosCadastrais.porte || 'MEDIO';
             ufEncontrada = dadosCadastrais.uf || ufEncontrada;
-            console.log('✅ BrasilAPI retornou dados para CNPJ: ' + cnpjEncontrado + ' porte: ' + porteEncontrado + ' abertura: ' + dadosCadastrais.data_abertura);
+            console.log('✅ Dados complementares obtidos para CNPJ: ' + cnpjEncontrado + ' porte: ' + porteEncontrado + ' abertura: ' + dadosCadastrais.data_abertura);
         } else {
-            console.warn('⚠️ BrasilAPI NÃO retornou dados para CNPJ:', cnpjEncontrado);
-            // Se a BrasilAPI falhou, cria dadosCadastrais com o que temos do banco local
+            console.warn('⚠️ Nenhuma fonte retornou dados complementares para CNPJ:', cnpjEncontrado);
+            // Cria dadosCadastrais com o que temos do banco local
             if (!dadosCadastrais) {
                 dadosCadastrais = {
                     cnpj: cnpjEncontrado,
