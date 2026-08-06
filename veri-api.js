@@ -28,7 +28,8 @@
 // CORRIGIDO: Erro de sintaxe na linha 291 (crases no console.log)
 // CORRIGIDO: Busca no Storage para razão social e fallback de CNPJ
 // CORRIGIDO: DEMAIS substituído por GIGANTE em todos os lugares
-// CORRIGIDO: Prioriza faturamento do orquestrador antes de estimar por porte
+// CORRIGIDO: Prioriza faturamento do banco regional (orquestrador) ACIMA de qualquer estimativa
+// CORRIGIDO: Porte GIGANTE prevalece sobre qualquer outro porte vindo de APIs
 // ============================================
 
 const express = require("express");
@@ -218,7 +219,7 @@ function encontrarCNPJPorNome(nome, uf) {
                     setor: empresa.setor,
                     uf: ufKey,
                     nome_encontrado: empresa.nome,
-                    porte: empresa.porte || 'MEDIO',
+                    porte: 'GIGANTE',
                     fonte: 'banco_local'
                 };
             }
@@ -876,7 +877,7 @@ async function cadeiaDeBuscaCNPJ(entrada) {
             return {
                 cnpj: cnpjEncontrado,
                 razao_social: localResult.nome_encontrado || nomeBusca,
-                porte: localResult.porte || "MEDIO",
+                porte: 'GIGANTE',
                 data_abertura: "",
                 situacao: "ATIVA",
                 fonte: "banco_local"
@@ -1342,21 +1343,25 @@ app.post("/enriquecer", async function(req, res) {
         };
 
         // ============================================================
-        // CORREÇÃO: FATURAMENTO ANUAL – PRIORIDADE DO ORQUESTRADOR
+        // 🔧 CORREÇÃO: FATURAMENTO ANUAL – PRIORIDADE MÁXIMA DO BANCO REGIONAL
         // ============================================================
         var faturamentoAnualEncontrado = null;
         var faturamentoFonte = "";
 
-        // 🔧 CORRIGIDO: Prioriza o faturamento do orquestrador (que vem do banco local)
+        // 1. PRIORIDADE MÁXIMA: faturamento do banco regional (via orquestrador)
         if (dadosOrquestrador.faturamento_anual) {
             faturamentoAnualEncontrado = dadosOrquestrador.faturamento_anual;
-            faturamentoFonte = "banco_regional_orquestrador";
-            console.log("✅ Faturamento obtido do banco regional:", faturamentoAnualEncontrado);
-        } else if (dadosCadastrais.faturamento_anual && dadosCadastrais.faturamento_anual > 0) {
+            faturamentoFonte = "banco_regional";
+            console.log("✅ FATURAMENTO DO BANCO REGIONAL:", faturamentoAnualEncontrado);
+        } 
+        // 2. Se NÃO veio do banco, usa o que veio dos dados cadastrais (BrasilAPI/CSV)
+        else if (dadosCadastrais.faturamento_anual && dadosCadastrais.faturamento_anual > 0) {
             faturamentoAnualEncontrado = dadosCadastrais.faturamento_anual;
             faturamentoFonte = "dados_cadastrais";
-            console.log("✅ Faturamento obtido dos dados cadastrais:", faturamentoAnualEncontrado);
-        } else {
+            console.log("✅ FATURAMENTO DOS DADOS CADASTRAIS:", faturamentoAnualEncontrado);
+        }
+        // 3. Fallback final: estima por porte
+        else {
             const porteEmpresa = dadosCadastrais.porte || "MEDIO";
             const faturamentoAnualPorPorte = {
                 "MEI": 81000,
@@ -1368,11 +1373,21 @@ app.post("/enriquecer", async function(req, res) {
             };
             faturamentoAnualEncontrado = faturamentoAnualPorPorte[porteEmpresa] || faturamentoAnualPorPorte["GRANDE"];
             faturamentoFonte = "estimado_por_porte";
-            console.log("⚠️ Faturamento estimado por porte:", faturamentoAnualEncontrado);
+            console.log("⚠️ FATURAMENTO ESTIMADO POR PORTE:", faturamentoAnualEncontrado);
         }
 
         dadosCadastrais.faturamento_anual = faturamentoAnualEncontrado;
         dadosCadastrais.faturamento_fonte = faturamentoFonte;
+
+        // 🔧 CORREÇÃO: PORTE - Garantir que empresas do banco regional sejam GIGANTE
+        if (dadosOrquestrador.faturamento_anual) {
+            // Se veio do banco regional, o porte é GIGANTE
+            dadosCadastrais.porte = 'GIGANTE';
+            console.log("✅ PORTE FORÇADO PARA GIGANTE (banco regional)");
+        } else if (dadosCadastrais.porte === 'DEMAIS') {
+            dadosCadastrais.porte = 'GIGANTE';
+            console.log("✅ PORTE CORRIGIDO: DEMAIS → GIGANTE");
+        }
 
         // ============================================================
         // ADAPTADO: CAPTURA VALOR DO NEGÓCIO (Contratação/Compra/Venda)
