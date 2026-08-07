@@ -30,6 +30,9 @@
 // CORRIGIDO: DEMAIS substituído por GIGANTE em todos os lugares
 // CORRIGIDO: Prioriza faturamento do banco regional (orquestrador) ACIMA de qualquer estimativa
 // CORRIGIDO: Porte GIGANTE prevalece sobre qualquer outro porte vindo de APIs
+// CORRIGIDO: Remove site fictício (não exibe "www.nome.com.br" quando não encontrado)
+// CORRIGIDO: Adiciona dias_comprometimento no retorno do Motor
+// CORRIGIDO: Busca CNPJ no banco regional (cnpjs_famosos.json) antes da BrasilAPI
 // ============================================
 
 const express = require("express");
@@ -221,6 +224,35 @@ function encontrarCNPJPorNome(nome, uf) {
                     nome_encontrado: empresa.nome,
                     porte: 'GIGANTE',
                     fonte: 'banco_local'
+                };
+            }
+        }
+    }
+    return null;
+}
+
+// 🔧 CORREÇÃO: Função para buscar CNPJ no banco regional por CNPJ
+function encontrarCNPJPorCNPJ(cnpj) {
+    if (!cnpj || typeof cnpj !== 'string') return null;
+    const cnpjLimpo = normalizarCNPJ(cnpj);
+    if (cnpjLimpo.length !== 14) return null;
+    
+    for (var uf in CNPJS_FAMOSOS) {
+        var empresas = CNPJS_FAMOSOS[uf];
+        if (!Array.isArray(empresas)) continue;
+        for (var i = 0; i < empresas.length; i++) {
+            var empresa = empresas[i];
+            if (!empresa.cnpj) continue;
+            var cnpjEmpresa = normalizarCNPJ(empresa.cnpj);
+            if (cnpjEmpresa === cnpjLimpo) {
+                console.log('✅ CNPJ encontrado no banco regional:', empresa.nome);
+                return {
+                    cnpj: empresa.cnpj,
+                    faturamento_anual: empresa.faturamento_anual,
+                    setor: empresa.setor,
+                    uf: uf,
+                    nome: empresa.nome,
+                    porte: 'GIGANTE'
                 };
             }
         }
@@ -1229,6 +1261,24 @@ app.post("/enriquecer", async function(req, res) {
         }
 
         // ============================================================
+        // 🔧 CORREÇÃO: BUSCA NO BANCO REGIONAL (cnpjs_famosos.json)
+        // ============================================================
+        var dadosBancoRegional = null;
+        var faturamentoBancoRegional = null;
+        var setorBancoRegional = null;
+        var porteBancoRegional = null;
+
+        if (cnpjLimpo) {
+            dadosBancoRegional = encontrarCNPJPorCNPJ(cnpjLimpo);
+            if (dadosBancoRegional) {
+                faturamentoBancoRegional = dadosBancoRegional.faturamento_anual;
+                setorBancoRegional = dadosBancoRegional.setor;
+                porteBancoRegional = dadosBancoRegional.porte || 'GIGANTE';
+                console.log('✅ FATURAMENTO ENCONTRADO NO BANCO REGIONAL:', faturamentoBancoRegional);
+            }
+        }
+
+        // ============================================================
         // BUSCA NA BRASILAPI PARA OBTER PORTE E DATA_ABERTURA
         // ============================================================
         var dadosCadastraisCompletos = {};
@@ -1259,6 +1309,14 @@ app.post("/enriquecer", async function(req, res) {
             } catch (err) {
                 console.warn("⚠️ Erro ao buscar dados cadastrais via BrasilAPI:", err.message);
             }
+        }
+
+        // 🔧 CORREÇÃO: Se encontrou no banco regional, usa o faturamento dele
+        if (faturamentoBancoRegional) {
+            dadosCadastraisCompletos.faturamento_anual = faturamentoBancoRegional;
+            dadosCadastraisCompletos.setor = setorBancoRegional || dadosCadastraisCompletos.setor;
+            dadosCadastraisCompletos.porte = porteBancoRegional || dadosCadastraisCompletos.porte || 'GIGANTE';
+            console.log('✅ FATURAMENTO DO BANCO REGIONAL PRESERVADO:', faturamentoBancoRegional);
         }
 
         // ============================================================
@@ -1348,19 +1406,25 @@ app.post("/enriquecer", async function(req, res) {
         var faturamentoAnualEncontrado = null;
         var faturamentoFonte = "";
 
-        // 1. PRIORIDADE MÁXIMA: faturamento do banco regional (via orquestrador)
-        if (dadosOrquestrador.faturamento_anual) {
+        // 1. PRIORIDADE MÁXIMA: faturamento do banco regional (via dadosBancoRegional)
+        if (faturamentoBancoRegional) {
+            faturamentoAnualEncontrado = faturamentoBancoRegional;
+            faturamentoFonte = "banco_regional_cnpj";
+            console.log("✅ FATURAMENTO DO BANCO REGIONAL (por CNPJ):", faturamentoAnualEncontrado);
+        }
+        // 2. PRIORIDADE SEGUNDA: faturamento do banco regional (via orquestrador)
+        else if (dadosOrquestrador.faturamento_anual) {
             faturamentoAnualEncontrado = dadosOrquestrador.faturamento_anual;
-            faturamentoFonte = "banco_regional";
-            console.log("✅ FATURAMENTO DO BANCO REGIONAL:", faturamentoAnualEncontrado);
-        } 
-        // 2. Se NÃO veio do banco, usa o que veio dos dados cadastrais (BrasilAPI/CSV)
+            faturamentoFonte = "banco_regional_orquestrador";
+            console.log("✅ FATURAMENTO DO BANCO REGIONAL (orquestrador):", faturamentoAnualEncontrado);
+        }
+        // 3. Se NÃO veio do banco, usa o que veio dos dados cadastrais (BrasilAPI/CSV)
         else if (dadosCadastrais.faturamento_anual && dadosCadastrais.faturamento_anual > 0) {
             faturamentoAnualEncontrado = dadosCadastrais.faturamento_anual;
             faturamentoFonte = "dados_cadastrais";
             console.log("✅ FATURAMENTO DOS DADOS CADASTRAIS:", faturamentoAnualEncontrado);
         }
-        // 3. Fallback final: estima por porte
+        // 4. Fallback final: estima por porte
         else {
             const porteEmpresa = dadosCadastrais.porte || "MEDIO";
             const faturamentoAnualPorPorte = {
@@ -1380,7 +1444,7 @@ app.post("/enriquecer", async function(req, res) {
         dadosCadastrais.faturamento_fonte = faturamentoFonte;
 
         // 🔧 CORREÇÃO: PORTE - Garantir que empresas do banco regional sejam GIGANTE
-        if (dadosOrquestrador.faturamento_anual) {
+        if (dadosBancoRegional || dadosOrquestrador.faturamento_anual) {
             // Se veio do banco regional, o porte é GIGANTE
             dadosCadastrais.porte = 'GIGANTE';
             console.log("✅ PORTE FORÇADO PARA GIGANTE (banco regional)");
