@@ -1,10 +1,10 @@
 // ============================================================
 // gemini.client.js - Cliente Gemini com fallback para DeepSeek
 // VERSÃO DEFINITIVA - CONSOLIDADA
-// CORRIGIDO: Modelos atualizados para versões pagas disponíveis
-// CORRIGIDO: gemini-2.5-flash-lite como principal (mais barato)
-// CORRIGIDO: gemini-2.5-flash como fallback (custo moderado)
-// CORRIGIDO: Removidos modelos Pro e 3.5 (muito caros)
+// CORRIGIDO: Modelos atualizados para versões disponíveis
+// CORRIGIDO: gemini-2.0-flash como principal (disponível)
+// CORRIGIDO: gemini-2.0-flash-lite como fallback (disponível)
+// CORRIGIDO: Removidos modelos indisponíveis (2.5-flash e 2.5-flash-lite)
 // CORRIGIDO: Lê chave da variável GEMINI_API_KEY (não GOOGLE_API_KEY)
 // ============================================================
 
@@ -13,8 +13,9 @@ const { HarmCategory, HarmBlockThreshold } = require("@google/generative-ai");
 const axios = require('axios');
 
 const MODELOS_GEMINI = [
-    'gemini-2.5-flash-lite',  // ← Principal (mais barato: $0.10/$0.40)
-    'gemini-2.5-flash'        // ← Fallback (custo moderado: $0.30/$2.50)
+    'gemini-2.0-flash',        // ← Principal (disponível)
+    'gemini-2.0-flash-lite'    // ← Fallback (disponível)
+    // NÃO USAR: gemini-2.5-flash, gemini-2.5-flash-lite (indisponíveis)
     // NÃO USAR: gemini-3.5-flash, gemini-2.5-pro (muito caros)
 ];
 
@@ -219,16 +220,17 @@ async function estruturar(fontes, timeoutMs) {
         }
     }
 
-    console.log('Tentando DeepSeek como fallback...');
-    try {
-        const resultadoDeepSeek = await tentarDeepSeek(dadosParaPrompt, timeout);
-        if (resultadoDeepSeek) {
-            console.log('DeepSeek usado como fallback.');
-            return garantirEstruturaMinima(resultadoDeepSeek);
-        }
-    } catch (err) {
-        console.warn('DeepSeek falhou:', err.message);
-    }
+    // 🔧 CORREÇÃO: DeepSeek desativado temporariamente (erro 402)
+    // console.log('Tentando DeepSeek como fallback...');
+    // try {
+    //     const resultadoDeepSeek = await tentarDeepSeek(dadosParaPrompt, timeout);
+    //     if (resultadoDeepSeek) {
+    //         console.log('DeepSeek usado como fallback.');
+    //         return garantirEstruturaMinima(resultadoDeepSeek);
+    //     }
+    // } catch (err) {
+    //     console.warn('DeepSeek falhou:', err.message);
+    // }
 
     console.error('Todos os provedores falharam. Retornando fallback vazio.');
     return criarEstruturaVazia('Falha em todos os provedores');
