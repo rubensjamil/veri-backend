@@ -9,6 +9,7 @@
 // CORRIGIDO: Percentual de comprometimento para PF usa renda mensal
 // CORRIGIDO: Cálculo do ticketDiario com fallback por porte
 // CORRIGIDO: DEMAIS substituído por GIGANTE
+// CORRIGIDO: Adicionado dias_comprometimento no retorno
 // ============================================================
 
 const config = require('../../motor.config.js');
@@ -355,6 +356,7 @@ function calcularRiscos(dados) {
             porte_analisado: (dados.analisado && dados.analisado.porte) || '',
             metodologia: config.METODOLOGIA_VERSAO,
             percentual_comprometimento: 0,
+            dias_comprometimento: 0,
             alerta: {
                 tipo: 'SITUACAO_CRITICA',
                 mensagem: 'A empresa está com situação "' + situacaoRaw + '". Negócios com essa situação são considerados inviáveis.',
@@ -435,7 +437,14 @@ function calcularRiscos(dados) {
         percentualComprometimento = Math.round((valorParcela / ticketDiario) * 100);
     }
 
+    // 🔧 CORREÇÃO: Calcular dias de comprometimento
+    var diasComprometimento = 0;
+    if (ticketDiario > 0 && valorNegocio > 0) {
+        diasComprometimento = Math.round((valorNegocio / ticketDiario) * 10) / 10;
+    }
+
     console.log('🧮 PERCENTUAL: valorParcela:', valorParcela, 'ticketDiario:', ticketDiario, 'percentual:', percentualComprometimento);
+    console.log('📆 DIAS COMPROMETIMENTO:', diasComprometimento);
 
     const resolutividade = config.DEFAULTS.RESOLUTIVIDADE;
     const contratual = 0;
@@ -520,7 +529,7 @@ function calcularRiscos(dados) {
     const chaveTipo = porta + '_' + sub;
     const tipoAnalise = DESCRICAO_PORTAS[chaveTipo] || 'Geral';
 
-    console.log('📊 MOTOR: score:', scoreGlobal, 'percentual:', percentualComprometimento);
+    console.log('📊 MOTOR: score:', scoreGlobal, 'percentual:', percentualComprometimento, 'dias:', diasComprometimento);
 
     return {
         score_global: scoreGlobal,
@@ -535,7 +544,8 @@ function calcularRiscos(dados) {
         porte_solicitante: relacionalResult.porte_solicitante || 'MEDIO',
         porte_analisado: relacionalResult.porte_analisado || '',
         metodologia: config.METODOLOGIA_VERSAO,
-        percentual_comprometimento: percentualComprometimento
+        percentual_comprometimento: percentualComprometimento,
+        dias_comprometimento: diasComprometimento
     };
 }
 

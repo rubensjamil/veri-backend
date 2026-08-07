@@ -5,6 +5,7 @@
 // CORRIGIDO: Faturamento do banco local preservado
 // CORRIGIDO: Fallback para CSV no Google Cloud Storage
 // CORRIGIDO: Porte GIGANTE prevalece sobre qualquer outro
+// CORRIGIDO: Não cria site fictício (retorna null)
 // CORRIGIDO: Logs adicionados para rastrear faturamento
 // ============================================================
 
@@ -539,16 +540,7 @@ async function buscarSiteOficial(nome) {
         console.warn('⚠️ Busca por site via Google falhou: ' + e.message);
     }
 
-    if (!siteEncontrado) {
-        var nomeLimpo = nome.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
-        var dominiosFallback = ['.com.br', '.com', '.org', '.net'];
-        for (var k = 0; k < dominiosFallback.length; k++) {
-            var siteCandidato = 'www.' + nomeLimpo + dominiosFallback[k];
-            console.log('🔍 Site sugerido (fallback): ' + siteCandidato);
-            return siteCandidato;
-        }
-    }
-
+    // 🔧 CORREÇÃO: Não cria site fictício
     console.log('❌ Site nao encontrado para: ' + nome);
     return null;
 }
@@ -980,6 +972,7 @@ async function coletarEvidenciasReais(nome, cnpj, cpf, uf, modulo, subModulo) {
     var porteParaBusca = porteEncontrado || 'MEDIO';
     var queries = gerarQueries(nome, cnpjEncontrado, cpfEncontrado, ufEncontrada, porteParaBusca);
 
+    // 🔧 CORREÇÃO: Não criar site fictício
     var siteOficial = await buscarSiteOficial(nome || (dadosCadastrais && dadosCadastrais.razao_social) || '');
     console.log('🔍 Site encontrado: ' + siteOficial);
 
