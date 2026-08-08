@@ -10,6 +10,7 @@
 // CORRIGIDO: Cálculo do ticketDiario com fallback por porte
 // CORRIGIDO: DEMAIS substituído por GIGANTE
 // CORRIGIDO: Adicionado dias_comprometimento no retorno
+// CORRIGIDO: Impacto financeiro SEMPRE com base em quem assume o compromisso
 // ============================================================
 
 const config = require('../../motor.config.js');
@@ -50,13 +51,20 @@ function calcularFinanceiro(dados) {
     let ticketUsado = 0;
     let fonte = '';
 
+    // ============================================================
+    // 🔧 CORREÇÃO: Quem assume o compromisso financeiro?
+    // - COMPRA: o solicitante assume o compromisso (paga)
+    // - VENDA: o analisado assume o compromisso (paga/recebe)
+    // ============================================================
+
     if (isCompra) {
+        // 🔧 COMPRA: o solicitante assume o compromisso financeiro
         if (solicitante.tipo === 'pessoa' && solicitante.renda && solicitante.renda > 0) {
             ticketUsado = solicitante.renda / 30;
             fonte = 'renda_solicitante';
-        } else if (solicitante.tipo === 'pessoa') {
-            ticketUsado = 5000 / 30;
-            fonte = 'renda_pf_fallback';
+        } else if (solicitante.tipo === 'empresa' && solicitante.faturamento_anual && solicitante.faturamento_anual > 0) {
+            ticketUsado = solicitante.faturamento_anual / 12 / 30;
+            fonte = 'faturamento_solicitante';
         } else if (solicitante.tipo === 'empresa') {
             ticketUsado = calcularTicketDiario(solicitante.porte || 'MEDIO');
             fonte = 'porte_solicitante';
@@ -65,6 +73,7 @@ function calcularFinanceiro(dados) {
             fonte = 'ticket_medio_fallback';
         }
     } else if (isVenda) {
+        // 🔧 VENDA: o analisado assume o compromisso financeiro
         if (analisado.tipo === 'pessoa' && analisado.renda && analisado.renda > 0) {
             ticketUsado = analisado.renda / 30;
             fonte = 'renda_analisado';
@@ -84,6 +93,7 @@ function calcularFinanceiro(dados) {
             fonte = 'ticket_medio_fallback';
         }
     } else {
+        // Fallback para outros casos
         ticketUsado = calcularTicketDiario(analisado.porte || 'MEDIO');
         fonte = 'porte_analisado_fallback';
     }
@@ -100,6 +110,9 @@ function calcularFinanceiro(dados) {
 
     let financeiro = config.DEFAULTS.FINANCEIRO;
     if (proporcaoRaw > 0) {
+        // 🔧 CORREÇÃO: Ajustar a lógica de pontuação com base em quem assume o compromisso
+        // Para compra: o solicitante pode ser PF ou PJ
+        // Para venda: o analisado pode ser PF ou PJ
         const isPFParte = (isCompra && solicitante.tipo === 'pessoa') || (isVenda && analisado.tipo === 'pessoa');
 
         if (isPFParte) {
@@ -374,7 +387,7 @@ function calcularRiscos(dados) {
     const relacionalResult = calcularRelacional(dados);
 
     // ============================================================
-    // CORREÇÃO: PERCENTUAL DE COMPROMETIMENTO com faturamento REAL
+    // 🔧 CORREÇÃO: PERCENTUAL DE COMPROMETIMENTO - Quem assume o compromisso?
     // ============================================================
     var percentualComprometimento = 0;
     var valorNegocio = dados.negocio.valor || 0;
@@ -389,14 +402,15 @@ function calcularRiscos(dados) {
     var isVenda = negocioStr.startsWith('vender');
 
     var ticketDiario = 0;
-    // Para compra: base é o solicitante
+
+    // 🔧 CORREÇÃO: Quem assume o compromisso financeiro?
     if (isCompra) {
+        // COMPRA: o solicitante assume o compromisso (paga)
         if (dados.solicitante.tipo === 'pessoa' && dados.solicitante.renda && dados.solicitante.renda > 0) {
             ticketDiario = dados.solicitante.renda / 30;
         } else if (dados.solicitante.tipo === 'empresa' && dados.solicitante.faturamento_anual && dados.solicitante.faturamento_anual > 0) {
             ticketDiario = dados.solicitante.faturamento_anual / 12 / 30;
         } else if (dados.solicitante.tipo === 'empresa') {
-            // Fallback: usa o faturamento estimado por porte
             const faturamentoAnualPorPorte = {
                 "MEI": 81000,
                 "ME": 360000,
@@ -410,13 +424,12 @@ function calcularRiscos(dados) {
             ticketDiario = financeiroResult.ticket_estimado || 1000;
         }
     } else if (isVenda) {
-        // Para venda: base é o analisado
+        // VENDA: o analisado assume o compromisso (paga/recebe)
         if (dados.analisado.tipo === 'pessoa' && dados.analisado.renda && dados.analisado.renda > 0) {
             ticketDiario = dados.analisado.renda / 30;
         } else if (dados.analisado.tipo === 'empresa' && dados.analisado.faturamento_anual && dados.analisado.faturamento_anual > 0) {
             ticketDiario = dados.analisado.faturamento_anual / 12 / 30;
         } else if (dados.analisado.tipo === 'empresa') {
-            // Fallback: usa o faturamento estimado por porte
             const faturamentoAnualPorPorte = {
                 "MEI": 81000,
                 "ME": 360000,
