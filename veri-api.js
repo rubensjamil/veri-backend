@@ -34,6 +34,7 @@
 // CORRIGIDO: Adiciona dias_comprometimento no retorno do Motor
 // CORRIGIDO: Busca CNPJ no banco regional (cnpjs_famosos.json) antes da BrasilAPI
 // CORRIGIDO: Removida evidência de comprometimento do backend (frontend calcula)
+// CORRIGIDO: Fallback de faturamento com nomes por extenso (MICRO EMPRESA, etc.)
 // ============================================
 
 const express = require("express");
@@ -641,12 +642,20 @@ function getTendenciaEvolucao(cnpj, scoreAtual, riscosAtuais) {
 const FATURAMENTO_ANUAL = config.FATURAMENTO_ANUAL;
 function calcularFaturamentoMensalPorPorte(porte) {
     const faturamentoAnual = {
+        // Siglas
         "MEI": 81000,
         "ME": 360000,
         "EPP": 4800000,
         "MEDIO": 12000000,
         "GRANDE": 50000000,
-        "GIGANTE": 50000000
+        "GIGANTE": 50000000,
+        // Nomes por extenso (fallback)
+        "MICRO EMPRESA": 81000,
+        "MICROEMPRESA": 81000,
+        "EMPRESA INDIVIDUAL": 81000,
+        "MICRO EMPREENDEDOR INDIVIDUAL": 81000,
+        "EMPRESA DE PEQUENO PORTE": 360000,
+        "PEQUENO PORTE": 360000
     };
     return (faturamentoAnual[porte] || faturamentoAnual["GRANDE"]) / 12;
 }
@@ -1407,16 +1416,24 @@ app.post("/enriquecer", async function(req, res) {
             faturamentoFonte = "dados_cadastrais";
             console.log("✅ FATURAMENTO DOS DADOS CADASTRAIS:", faturamentoAnualEncontrado);
         }
-        // 4. Fallback final: estima por porte
+        // 4. 🔧 CORREÇÃO: Fallback por porte (com suporte a nomes por extenso)
         else {
-            const porteEmpresa = dadosCadastrais.porte || "MEDIO";
-            const faturamentoAnualPorPorte = {
+            var porteEmpresa = dadosCadastrais.porte || "MEDIO";
+            var faturamentoAnualPorPorte = {
+                // Siglas
                 "MEI": 81000,
                 "ME": 360000,
                 "EPP": 4800000,
                 "MEDIO": 12000000,
                 "GRANDE": 50000000,
-                "GIGANTE": 50000000
+                "GIGANTE": 50000000,
+                // Nomes por extenso (fallback BrasilAPI)
+                "MICRO EMPRESA": 81000,
+                "MICROEMPRESA": 81000,
+                "EMPRESA INDIVIDUAL": 81000,
+                "MICRO EMPREENDEDOR INDIVIDUAL": 81000,
+                "EMPRESA DE PEQUENO PORTE": 360000,
+                "PEQUENO PORTE": 360000
             };
             faturamentoAnualEncontrado = faturamentoAnualPorPorte[porteEmpresa] || faturamentoAnualPorPorte["GRANDE"];
             faturamentoFonte = "estimado_por_porte";
@@ -1742,7 +1759,6 @@ app.post("/enriquecer", async function(req, res) {
         });
     }
 });
-
 // ============================================
 // INICIA O SERVIDOR
 // ============================================
