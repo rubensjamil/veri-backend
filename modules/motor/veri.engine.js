@@ -12,6 +12,7 @@
 // CORRIGIDO: Adicionado dias_comprometimento no retorno
 // CORRIGIDO: Impacto financeiro SEMPRE com base em quem assume o compromisso
 // CORRIGIDO: Nomes por extenso da BrasilAPI (MICRO EMPRESA, etc.) mapeados para MEI/ME
+// CORRIGIDO: Recomendação considera IMPACTO + PROBABILIDADE (dias > 15 = PARE)
 // ============================================================
 
 const config = require('../../motor.config.js');
@@ -53,6 +54,32 @@ function normalizarPorte(porte) {
     };
     
     return mapeamento[p] || porte;
+}
+
+// ============================================
+// FUNÇÃO: Obter faturamento anual por porte
+// ============================================
+function obterFaturamentoAnual(porte) {
+    var porteNormalizado = normalizarPorte(porte) || porte;
+    
+    var faturamentoAnual = {
+        // Siglas
+        'MEI': 81000,
+        'ME': 360000,
+        'EPP': 4800000,
+        'MEDIO': 12000000,
+        'GRANDE': 50000000,
+        'GIGANTE': 50000000,
+        // Nomes por extenso (fallback)
+        'MICRO EMPRESA': 81000,
+        'MICROEMPRESA': 81000,
+        'EMPRESA INDIVIDUAL': 81000,
+        'MICRO EMPREENDEDOR INDIVIDUAL': 81000,
+        'EMPRESA DE PEQUENO PORTE': 360000,
+        'PEQUENO PORTE': 360000
+    };
+    
+    return faturamentoAnual[porteNormalizado] || faturamentoAnual['MEDIO'];
 }
 
 // ============================================
@@ -301,9 +328,8 @@ function calcularRelacional(dados) {
 // ============================================
 
 function calcularTicketDiario(porte) {
-    var porteNormalizado = normalizarPorte(porte) || porte;
-    const anual = config.FATURAMENTO_ANUAL[porteNormalizado] || 0;
-    return anual ? Math.round(anual / 12 / 30) : 0;
+    var faturamentoAnual = obterFaturamentoAnual(porte);
+    return faturamentoAnual ? Math.round(faturamentoAnual / 12 / 30) : 0;
 }
 
 function calcularTempoMercado(dataAbertura) {
@@ -317,6 +343,13 @@ function getNivelRisco(contrib) {
     if (contrib >= niveis.ALTO) return 'ALTO';
     if (contrib >= niveis.MEDIO) return 'MEDIO';
     return 'BAIXO';
+}
+
+function getNivelImpacto(dias) {
+    if (dias <= 3) return { nivel: 'Baixo', cor: '🟢' };
+    if (dias <= 7) return { nivel: 'Moderado', cor: '🟡' };
+    if (dias <= 15) return { nivel: 'Alto', cor: '🟠' };
+    return { nivel: 'Crítico', cor: '🔴' };
 }
 
 // ============================================
@@ -426,21 +459,8 @@ function calcularRiscos(dados) {
             ticketDiario = dados.solicitante.faturamento_anual / 12 / 30;
         } else if (dados.solicitante.tipo === 'empresa') {
             var porteNormalizado = normalizarPorte(dados.solicitante.porte) || dados.solicitante.porte || 'MEDIO';
-            const faturamentoAnualPorPorte = {
-                "MEI": 81000,
-                "ME": 360000,
-                "EPP": 4800000,
-                "MEDIO": 12000000,
-                "GRANDE": 50000000,
-                "GIGANTE": 50000000,
-                "MICRO EMPRESA": 81000,
-                "MICROEMPRESA": 81000,
-                "EMPRESA INDIVIDUAL": 81000,
-                "MICRO EMPREENDEDOR INDIVIDUAL": 81000,
-                "EMPRESA DE PEQUENO PORTE": 360000,
-                "PEQUENO PORTE": 360000
-            };
-            ticketDiario = (faturamentoAnualPorPorte[porteNormalizado] || faturamentoAnualPorPorte["GRANDE"]) / 12 / 30;
+            var faturamentoAnual = obterFaturamentoAnual(porteNormalizado);
+            ticketDiario = faturamentoAnual / 12 / 30;
         } else {
             ticketDiario = financeiroResult.ticket_estimado || 1000;
         }
@@ -452,21 +472,8 @@ function calcularRiscos(dados) {
             ticketDiario = dados.analisado.faturamento_anual / 12 / 30;
         } else if (dados.analisado.tipo === 'empresa') {
             var porteNormalizado = normalizarPorte(dados.analisado.porte) || dados.analisado.porte || 'MEDIO';
-            const faturamentoAnualPorPorte = {
-                "MEI": 81000,
-                "ME": 360000,
-                "EPP": 4800000,
-                "MEDIO": 12000000,
-                "GRANDE": 50000000,
-                "GIGANTE": 50000000,
-                "MICRO EMPRESA": 81000,
-                "MICROEMPRESA": 81000,
-                "EMPRESA INDIVIDUAL": 81000,
-                "MICRO EMPREENDEDOR INDIVIDUAL": 81000,
-                "EMPRESA DE PEQUENO PORTE": 360000,
-                "PEQUENO PORTE": 360000
-            };
-            ticketDiario = (faturamentoAnualPorPorte[porteNormalizado] || faturamentoAnualPorPorte["GRANDE"]) / 12 / 30;
+            var faturamentoAnual = obterFaturamentoAnual(porteNormalizado);
+            ticketDiario = faturamentoAnual / 12 / 30;
         } else {
             ticketDiario = financeiroResult.ticket_estimado || 1000;
         }
@@ -483,8 +490,11 @@ function calcularRiscos(dados) {
         diasComprometimento = Math.round((valorNegocio / ticketDiario) * 10) / 10;
     }
 
+    // 🔧 CORREÇÃO: Nível de impacto
+    var nivelImpacto = getNivelImpacto(diasComprometimento);
+
     console.log('🧮 PERCENTUAL: valorParcela:', valorParcela, 'ticketDiario:', ticketDiario, 'percentual:', percentualComprometimento);
-    console.log('📆 DIAS COMPROMETIMENTO:', diasComprometimento);
+    console.log('📆 DIAS COMPROMETIMENTO:', diasComprometimento, 'NÍVEL:', nivelImpacto.nivel);
 
     const resolutividade = config.DEFAULTS.RESOLUTIVIDADE;
     const contratual = 0;
@@ -518,12 +528,32 @@ function calcularRiscos(dados) {
         };
     });
 
-    let recomendacao = 'SIGA';
+    // ============================================================
+    // 🔧 CORREÇÃO: RECOMENDAÇÃO considerando IMPACTO + PROBABILIDADE
+    // ============================================================
+    var recomendacao = 'SIGA';
+
+    // 1. Verifica o score (probabilidade)
     if (scoreGlobal > 65) {
         recomendacao = 'PARE';
     } else if (scoreGlobal >= 35 && scoreGlobal <= 65) {
         recomendacao = 'ATENCAO';
     }
+
+    // 2. 🔧 Se o impacto for CRÍTICO (dias > 15), força PARE
+    if (diasComprometimento > 15) {
+        recomendacao = 'PARE';
+        console.log('⚠️ IMPACTO CRÍTICO (' + diasComprometimento + ' dias): forçando PARE');
+    }
+    // 3. Se o impacto for ALTO (dias > 7) e a recomendação for SIGA, sobe para ATENCAO
+    else if (diasComprometimento > 7 && recomendacao === 'SIGA') {
+        recomendacao = 'ATENCAO';
+        console.log('⚠️ IMPACTO ALTO (' + diasComprometimento + ' dias): ajustando para ATENCAO');
+    }
+    // 4. Se o impacto for MODERADO (dias > 3) e a recomendação for SIGA, mantém SIGA (já está)
+    // 5. Se o impacto for BAIXO (dias <= 3), mantém a recomendação original
+
+    console.log('📊 RECOMENDAÇÃO FINAL:', recomendacao, '(score:', scoreGlobal, 'dias:', diasComprometimento, ')');
 
     // ============================================================
     // TOP RISCOS: FINANCEIRO SEMPRE + 3 MAIORES DOS DEMAIS
@@ -585,7 +615,8 @@ function calcularRiscos(dados) {
         porte_analisado: relacionalResult.porte_analisado || '',
         metodologia: config.METODOLOGIA_VERSAO,
         percentual_comprometimento: percentualComprometimento,
-        dias_comprometimento: diasComprometimento
+        dias_comprometimento: diasComprometimento,
+        nivel_impacto: nivelImpacto
     };
 }
 
@@ -599,6 +630,6 @@ module.exports = {
     calcularDeterioracao,
     calcularRelacional,
     calcularTicketDiario,
-    calcularTempoMercado,
     getNivelRisco
 };
+
