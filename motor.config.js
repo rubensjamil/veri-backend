@@ -16,22 +16,38 @@ module.exports = {
 
     // Ordens de porte para Risco Relacional
     ORDEM_PORTE: {
+        // Siglas
         'MEI': 1,
         'ME': 2,
         'EPP': 3,
         'MEDIO': 4,
         'GRANDE': 5,
-        'GIGANTE': 5
+        'GIGANTE': 5,
+        // 🔧 Nomes por extenso (fallback BrasilAPI)
+        'MICRO EMPRESA': 1,
+        'MICROEMPRESA': 1,
+        'EMPRESA INDIVIDUAL': 1,
+        'MICRO EMPREENDEDOR INDIVIDUAL': 1,
+        'EMPRESA DE PEQUENO PORTE': 2,
+        'PEQUENO PORTE': 2
     },
 
     // Faturamento anual por porte
     FATURAMENTO_ANUAL: {
+        // Siglas
         'MEI': 81000,
         'ME': 360000,
         'EPP': 4800000,
         'MEDIO': 12000000,
         'GRANDE': 50000000,
-        'GIGANTE': 50000000
+        'GIGANTE': 50000000,
+        // 🔧 Nomes por extenso (fallback BrasilAPI)
+        'MICRO EMPRESA': 81000,
+        'MICROEMPRESA': 81000,
+        'EMPRESA INDIVIDUAL': 81000,
+        'MICRO EMPREENDEDOR INDIVIDUAL': 81000,
+        'EMPRESA DE PEQUENO PORTE': 360000,
+        'PEQUENO PORTE': 360000
     },
 
     // Níveis de risco

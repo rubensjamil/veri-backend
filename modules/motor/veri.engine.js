@@ -11,6 +11,7 @@
 // CORRIGIDO: DEMAIS substituído por GIGANTE
 // CORRIGIDO: Adicionado dias_comprometimento no retorno
 // CORRIGIDO: Impacto financeiro SEMPRE com base em quem assume o compromisso
+// CORRIGIDO: Nomes por extenso da BrasilAPI (MICRO EMPRESA, etc.) mapeados para MEI/ME
 // ============================================================
 
 const config = require('../../motor.config.js');
@@ -35,6 +36,26 @@ const DESCRICAO_PORTAS = {
 };
 
 // ============================================
+// FUNÇÃO AUXILIAR: Normalizar porte (fallback)
+// ============================================
+function normalizarPorte(porte) {
+    if (!porte) return null;
+    var p = porte.toUpperCase().trim();
+    
+    // Mapeia nomes por extenso para siglas
+    var mapeamento = {
+        'MICRO EMPRESA': 'MEI',
+        'MICROEMPRESA': 'MEI',
+        'EMPRESA INDIVIDUAL': 'MEI',
+        'MICRO EMPREENDEDOR INDIVIDUAL': 'MEI',
+        'EMPRESA DE PEQUENO PORTE': 'ME',
+        'PEQUENO PORTE': 'ME'
+    };
+    
+    return mapeamento[p] || porte;
+}
+
+// ============================================
 // FUNÇÕES DE CÁLCULO POR FATOR
 // ============================================
 
@@ -51,12 +72,6 @@ function calcularFinanceiro(dados) {
     let ticketUsado = 0;
     let fonte = '';
 
-    // ============================================================
-    // 🔧 CORREÇÃO: Quem assume o compromisso financeiro?
-    // - COMPRA: o solicitante assume o compromisso (paga)
-    // - VENDA: o analisado assume o compromisso (paga/recebe)
-    // ============================================================
-
     if (isCompra) {
         // 🔧 COMPRA: o solicitante assume o compromisso financeiro
         if (solicitante.tipo === 'pessoa' && solicitante.renda && solicitante.renda > 0) {
@@ -66,7 +81,8 @@ function calcularFinanceiro(dados) {
             ticketUsado = solicitante.faturamento_anual / 12 / 30;
             fonte = 'faturamento_solicitante';
         } else if (solicitante.tipo === 'empresa') {
-            ticketUsado = calcularTicketDiario(solicitante.porte || 'MEDIO');
+            var porteNormalizado = normalizarPorte(solicitante.porte) || solicitante.porte || 'MEDIO';
+            ticketUsado = calcularTicketDiario(porteNormalizado);
             fonte = 'porte_solicitante';
         } else {
             ticketUsado = relacionamento.ticket_medio || 5000;
@@ -85,7 +101,8 @@ function calcularFinanceiro(dados) {
                 ticketUsado = analisado.faturamento_anual / 12 / 30;
                 fonte = 'faturamento_real_analisado';
             } else {
-                ticketUsado = calcularTicketDiario(analisado.porte || 'MEDIO');
+                var porteNormalizado = normalizarPorte(analisado.porte) || analisado.porte || 'MEDIO';
+                ticketUsado = calcularTicketDiario(porteNormalizado);
                 fonte = 'porte_analisado';
             }
         } else {
@@ -93,8 +110,8 @@ function calcularFinanceiro(dados) {
             fonte = 'ticket_medio_fallback';
         }
     } else {
-        // Fallback para outros casos
-        ticketUsado = calcularTicketDiario(analisado.porte || 'MEDIO');
+        var porteNormalizado = normalizarPorte(analisado.porte) || analisado.porte || 'MEDIO';
+        ticketUsado = calcularTicketDiario(porteNormalizado);
         fonte = 'porte_analisado_fallback';
     }
 
@@ -110,9 +127,6 @@ function calcularFinanceiro(dados) {
 
     let financeiro = config.DEFAULTS.FINANCEIRO;
     if (proporcaoRaw > 0) {
-        // 🔧 CORREÇÃO: Ajustar a lógica de pontuação com base em quem assume o compromisso
-        // Para compra: o solicitante pode ser PF ou PJ
-        // Para venda: o analisado pode ser PF ou PJ
         const isPFParte = (isCompra && solicitante.tipo === 'pessoa') || (isVenda && analisado.tipo === 'pessoa');
 
         if (isPFParte) {
@@ -204,7 +218,7 @@ function calcularComportamental(dados) {
 
 function calcularIntegridade(dados) {
     const { analisado } = dados;
-    const porteAnalisado = analisado.porte || '';
+    var porteAnalisado = normalizarPorte(analisado.porte) || analisado.porte || '';
     const regras = metodologia.REGRAS.INTEGRIDADE;
     let integridade = config.DEFAULTS.INTEGRIDADE;
 
@@ -232,8 +246,8 @@ function calcularDeterioracao(dados) {
 function calcularRelacional(dados) {
     const { analisado, solicitante } = dados;
     
-    let porteAnalisado = analisado.porte || '';
-    let porteSolicitante = solicitante.porte || config.DEFAULTS.PORTE_SOLICITANTE;
+    var porteAnalisado = normalizarPorte(analisado.porte) || analisado.porte || '';
+    var porteSolicitante = normalizarPorte(solicitante.porte) || solicitante.porte || config.DEFAULTS.PORTE_SOLICITANTE;
 
     if (analisado.tipo === 'pessoa') {
         const ordem = config.ORDEM_PORTE;
@@ -287,7 +301,8 @@ function calcularRelacional(dados) {
 // ============================================
 
 function calcularTicketDiario(porte) {
-    const anual = config.FATURAMENTO_ANUAL[porte] || 0;
+    var porteNormalizado = normalizarPorte(porte) || porte;
+    const anual = config.FATURAMENTO_ANUAL[porteNormalizado] || 0;
     return anual ? Math.round(anual / 12 / 30) : 0;
 }
 
@@ -387,7 +402,7 @@ function calcularRiscos(dados) {
     const relacionalResult = calcularRelacional(dados);
 
     // ============================================================
-    // 🔧 CORREÇÃO: PERCENTUAL DE COMPROMETIMENTO - Quem assume o compromisso?
+    // PERCENTUAL DE COMPROMETIMENTO - Quem assume o compromisso?
     // ============================================================
     var percentualComprometimento = 0;
     var valorNegocio = dados.negocio.valor || 0;
@@ -403,7 +418,6 @@ function calcularRiscos(dados) {
 
     var ticketDiario = 0;
 
-    // 🔧 CORREÇÃO: Quem assume o compromisso financeiro?
     if (isCompra) {
         // COMPRA: o solicitante assume o compromisso (paga)
         if (dados.solicitante.tipo === 'pessoa' && dados.solicitante.renda && dados.solicitante.renda > 0) {
@@ -411,15 +425,22 @@ function calcularRiscos(dados) {
         } else if (dados.solicitante.tipo === 'empresa' && dados.solicitante.faturamento_anual && dados.solicitante.faturamento_anual > 0) {
             ticketDiario = dados.solicitante.faturamento_anual / 12 / 30;
         } else if (dados.solicitante.tipo === 'empresa') {
+            var porteNormalizado = normalizarPorte(dados.solicitante.porte) || dados.solicitante.porte || 'MEDIO';
             const faturamentoAnualPorPorte = {
                 "MEI": 81000,
                 "ME": 360000,
                 "EPP": 4800000,
                 "MEDIO": 12000000,
                 "GRANDE": 50000000,
-                "GIGANTE": 50000000
+                "GIGANTE": 50000000,
+                "MICRO EMPRESA": 81000,
+                "MICROEMPRESA": 81000,
+                "EMPRESA INDIVIDUAL": 81000,
+                "MICRO EMPREENDEDOR INDIVIDUAL": 81000,
+                "EMPRESA DE PEQUENO PORTE": 360000,
+                "PEQUENO PORTE": 360000
             };
-            ticketDiario = (faturamentoAnualPorPorte[dados.solicitante.porte] || faturamentoAnualPorPorte["GRANDE"]) / 12 / 30;
+            ticketDiario = (faturamentoAnualPorPorte[porteNormalizado] || faturamentoAnualPorPorte["GRANDE"]) / 12 / 30;
         } else {
             ticketDiario = financeiroResult.ticket_estimado || 1000;
         }
@@ -430,15 +451,22 @@ function calcularRiscos(dados) {
         } else if (dados.analisado.tipo === 'empresa' && dados.analisado.faturamento_anual && dados.analisado.faturamento_anual > 0) {
             ticketDiario = dados.analisado.faturamento_anual / 12 / 30;
         } else if (dados.analisado.tipo === 'empresa') {
+            var porteNormalizado = normalizarPorte(dados.analisado.porte) || dados.analisado.porte || 'MEDIO';
             const faturamentoAnualPorPorte = {
                 "MEI": 81000,
                 "ME": 360000,
                 "EPP": 4800000,
                 "MEDIO": 12000000,
                 "GRANDE": 50000000,
-                "GIGANTE": 50000000
+                "GIGANTE": 50000000,
+                "MICRO EMPRESA": 81000,
+                "MICROEMPRESA": 81000,
+                "EMPRESA INDIVIDUAL": 81000,
+                "MICRO EMPREENDEDOR INDIVIDUAL": 81000,
+                "EMPRESA DE PEQUENO PORTE": 360000,
+                "PEQUENO PORTE": 360000
             };
-            ticketDiario = (faturamentoAnualPorPorte[dados.analisado.porte] || faturamentoAnualPorPorte["GRANDE"]) / 12 / 30;
+            ticketDiario = (faturamentoAnualPorPorte[porteNormalizado] || faturamentoAnualPorPorte["GRANDE"]) / 12 / 30;
         } else {
             ticketDiario = financeiroResult.ticket_estimado || 1000;
         }
@@ -450,7 +478,6 @@ function calcularRiscos(dados) {
         percentualComprometimento = Math.round((valorParcela / ticketDiario) * 100);
     }
 
-    // 🔧 CORREÇÃO: Calcular dias de comprometimento
     var diasComprometimento = 0;
     if (ticketDiario > 0 && valorNegocio > 0) {
         diasComprometimento = Math.round((valorNegocio / ticketDiario) * 10) / 10;
