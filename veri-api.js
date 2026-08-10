@@ -33,6 +33,7 @@
 // CORRIGIDO: Remove site fictício (não exibe "www.nome.com.br" quando não encontrado)
 // CORRIGIDO: Adiciona dias_comprometimento no retorno do Motor
 // CORRIGIDO: Busca CNPJ no banco regional (cnpjs_famosos.json) antes da BrasilAPI
+// CORRIGIDO: Removida evidência de comprometimento do backend (frontend calcula)
 // ============================================
 
 const express = require("express");
@@ -1076,62 +1077,35 @@ app.post("/analisar", async function(req, res) {
     }
 });
 // ============================================================
-// FUNÇÃO: GERAR EVIDÊNCIAS DE FALLBACK
+// FUNÇÃO: GERAR EVIDÊNCIAS DE FALLBACK (CORRIGIDA)
 // ============================================================
 function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMotor) {
     var evidencias = [];
     var agora = new Date().toISOString();
 
-    if (dadosFormulario && dadosFormulario.valor !== undefined) {
-        var valor = dadosFormulario.valor || 0;
-        var parcelas = dadosFormulario.parcelas || 1;
-        var valorParcela = parcelas > 0 ? valor / parcelas : 0;
+    // ============================================================
+    // 🔧 CORREÇÃO: Evidência de comprometimento REMOVIDA do backend
+    // O frontend calcula corretamente com base no faturamento/renda exibidos
+    // Mantém apenas a evidência de fallback quando não há valor
+    // ============================================================
 
-        var isPF = (dadosCadastrais && dadosCadastrais.tipo === "pessoa");
-        var ticketDiario = 0;
-        if (isPF) {
-            var rendaMensal = dadosCadastrais ? dadosCadastrais.renda || 0 : 0;
-            ticketDiario = rendaMensal / 30;
-        } else {
-            var faturamentoMensal = 0;
-            if (dadosCadastrais && dadosCadastrais.porte) {
-                var faturamentoAnual = {
-                    "MEI": 81000,
-                    "ME": 360000,
-                    "EPP": 4800000,
-                    "MEDIO": 12000000,
-                    "GRANDE": 50000000,
-                    "GIGANTE": 50000000
-                };
-                faturamentoMensal = (faturamentoAnual[dadosCadastrais.porte] || faturamentoAnual["GRANDE"]) / 12;
-            }
-            ticketDiario = faturamentoMensal / 30;
-        }
+    // Verifica se o valor do negócio foi informado
+    var valorInformado = dadosFormulario && dadosFormulario.valor !== undefined && dadosFormulario.valor > 0;
 
-        if (ticketDiario > 0 && valorParcela > 0) {
-            var percentual = Math.round((valorParcela / ticketDiario) * 100);
-            var baseTexto = isPF ? "renda diária" : "faturamento diário";
-            var descricao = "O valor da parcela compromete <strong>" + percentual + "%</strong> do " + baseTexto + " da " + (isPF ? "pessoa" : "empresa") + ".";
-            evidencias.push({
-                id: "EVID-FINANCEIRO-" + Date.now(),
-                descricao: descricao,
-                fonte: isPF ? "Usuário" : "Receita Federal do Brasil",
-                url: isPF ? null : "https://www.gov.br/receitafederal",
-                coletado_em: agora,
-                risco_associado: "FINANCEIRO"
-            });
-        } else {
-            evidencias.push({
-                id: "EVID-FINANCEIRO-" + Date.now(),
-                descricao: "Valor do negócio não informado ou sem base de comparação. Análise baseada nos demais fatores.",
-                fonte: "Usuário",
-                url: null,
-                coletado_em: agora,
-                risco_associado: "FINANCEIRO"
-            });
-        }
+    if (!valorInformado) {
+        evidencias.push({
+            id: "EVID-FINANCEIRO-" + Date.now(),
+            descricao: "Valor do negócio não informado. Análise baseada nos demais fatores.",
+            fonte: "Usuário",
+            url: null,
+            coletado_em: agora,
+            risco_associado: "FINANCEIRO"
+        });
     }
 
+    // ============================================================
+    // EVIDÊNCIA DE DESCONTINUIDADE (mantida)
+    // ============================================================
     var tempoMercado = 0;
     if (dadosCadastrais && dadosCadastrais.data_abertura) {
         var dataAbertura = new Date(dadosCadastrais.data_abertura);
@@ -1160,6 +1134,9 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
         });
     }
 
+    // ============================================================
+    // EVIDÊNCIA DE VERACIDADE (mantida)
+    // ============================================================
     if (dadosCadastrais && dadosCadastrais.situacao) {
         var situacao = dadosCadastrais.situacao.toUpperCase();
         var evidenciaVeracidade = "";
@@ -1178,6 +1155,9 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
         });
     }
 
+    // ============================================================
+    // EVIDÊNCIA DE SETOR (mantida)
+    // ============================================================
     if (dadosCadastrais && dadosCadastrais.setor) {
         evidencias.push({
             id: "EVID-REPUTACIONAL-" + Date.now(),
@@ -1189,6 +1169,9 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
         });
     }
 
+    // ============================================================
+    // EVIDÊNCIA COMPORTAMENTAL (mantida)
+    // ============================================================
     if (dadosFormulario) {
         var conhecimento = dadosFormulario.conhecimento || "nao_informado";
         var experiencia = dadosFormulario.experiencia || "nao_informada";
@@ -1600,7 +1583,8 @@ app.post("/enriquecer", async function(req, res) {
                 tipo: (req.body.analisante && req.body.analisante.tipo) || "empresa",
                 renda: renda_solicitante || 0,
                 email: email_solicitante || "",
-                whatsapp: whatsapp_solicitante || ""
+                whatsapp: whatsapp_solicitante || "",
+                faturamento_anual: (req.body.analisante && req.body.analisante.faturamento_anual) || null
             },
             relacionamento: {
                 conhecimento: req.body.conhecimento || "razoavel",
