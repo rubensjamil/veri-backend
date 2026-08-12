@@ -13,6 +13,8 @@
 // CORRIGIDO: Impacto financeiro SEMPRE com base em quem assume o compromisso
 // CORRIGIDO: Nomes por extenso da BrasilAPI (MICRO EMPRESA, etc.) mapeados para MEI/ME
 // CORRIGIDO: Recomendação considera IMPACTO + PROBABILIDADE (dias > 15 = PARE)
+// CORRIGIDO: Ajuste de riscos críticos (percentual = 99% - soma dos outros 3)
+// 🔧 CORRIGIDO: dias_comprometimento agora considera valor da parcela se for parcelado
 // ============================================================
 
 const config = require('../../motor.config.js');
@@ -21,7 +23,7 @@ const metodologia = require('../../motor.metodologia.js');
 // ============================================
 // MAPEAMENTO DE PORTAS (INTERNO)
 // ============================================
-const DESCRICAO_PORTAS = {
+var DESCRICAO_PORTAS = {
     'empresa_fornecedor': 'Fornecedor',
     'empresa_loja': 'Loja',
     'empresa_cliente_pj': 'Cliente PJ',
@@ -43,7 +45,6 @@ function normalizarPorte(porte) {
     if (!porte) return null;
     var p = porte.toUpperCase().trim();
     
-    // Mapeia nomes por extenso para siglas
     var mapeamento = {
         'MICRO EMPRESA': 'MEI',
         'MICROEMPRESA': 'MEI',
@@ -63,14 +64,12 @@ function obterFaturamentoAnual(porte) {
     var porteNormalizado = normalizarPorte(porte) || porte;
     
     var faturamentoAnual = {
-        // Siglas
         'MEI': 81000,
         'ME': 360000,
         'EPP': 4800000,
         'MEDIO': 12000000,
         'GRANDE': 50000000,
         'GIGANTE': 50000000,
-        // Nomes por extenso (fallback)
         'MICRO EMPRESA': 81000,
         'MICROEMPRESA': 81000,
         'EMPRESA INDIVIDUAL': 81000,
@@ -87,20 +86,22 @@ function obterFaturamentoAnual(porte) {
 // ============================================
 
 function calcularFinanceiro(dados) {
-    const { analisado, solicitante, negocio, relacionamento } = dados;
-    const valorNegocio = negocio.valor || 0;
-    const parcelas = negocio.parcelas || 1;
-    const valorParcela = valorNegocio / parcelas;
+    var analisado = dados.analisado;
+    var solicitante = dados.solicitante;
+    var negocio = dados.negocio;
+    var relacionamento = dados.relacionamento;
+    var valorNegocio = negocio.valor || 0;
+    var parcelas = negocio.parcelas || 1;
+    var valorParcela = valorNegocio / parcelas;
 
-    const negocioStr = typeof dados.negocio === 'string' ? dados.negocio : String((dados.negocio && dados.negocio.tipo) || (dados.negocio && dados.negocio.negocio) || '');
+    var negocioStr = typeof dados.negocio === 'string' ? dados.negocio : String((dados.negocio && dados.negocio.tipo) || (dados.negocio && dados.negocio.negocio) || '');
 
-    const isCompra = negocioStr.startsWith('comprar') || negocioStr.startsWith('contratar');
-    const isVenda = negocioStr.startsWith('vender');
-    let ticketUsado = 0;
-    let fonte = '';
+    var isCompra = negocioStr.startsWith('comprar') || negocioStr.startsWith('contratar');
+    var isVenda = negocioStr.startsWith('vender');
+    var ticketUsado = 0;
+    var fonte = '';
 
     if (isCompra) {
-        // 🔧 COMPRA: o solicitante assume o compromisso financeiro
         if (solicitante.tipo === 'pessoa' && solicitante.renda && solicitante.renda > 0) {
             ticketUsado = solicitante.renda / 30;
             fonte = 'renda_solicitante';
@@ -116,7 +117,6 @@ function calcularFinanceiro(dados) {
             fonte = 'ticket_medio_fallback';
         }
     } else if (isVenda) {
-        // 🔧 VENDA: o analisado assume o compromisso financeiro
         if (analisado.tipo === 'pessoa' && analisado.renda && analisado.renda > 0) {
             ticketUsado = analisado.renda / 30;
             fonte = 'renda_analisado';
@@ -147,25 +147,25 @@ function calcularFinanceiro(dados) {
         fonte = 'valor_padrao';
     }
 
-    let proporcaoRaw = 0;
+    var proporcaoRaw = 0;
     if (ticketUsado > 0 && valorParcela > 0) {
         proporcaoRaw = valorParcela / ticketUsado;
     }
 
-    let financeiro = config.DEFAULTS.FINANCEIRO;
+    var financeiro = config.DEFAULTS.FINANCEIRO;
     if (proporcaoRaw > 0) {
-        const isPFParte = (isCompra && solicitante.tipo === 'pessoa') || (isVenda && analisado.tipo === 'pessoa');
+        var isPFParte = (isCompra && solicitante.tipo === 'pessoa') || (isVenda && analisado.tipo === 'pessoa');
 
         if (isPFParte) {
-            const comprometimentoPercent = proporcaoRaw * 100;
-            const regras = metodologia.REGRAS.FINANCEIRO.PF;
+            var comprometimentoPercent = proporcaoRaw * 100;
+            var regras = metodologia.REGRAS.FINANCEIRO.PF;
             if (comprometimentoPercent >= regras.LIMITES[0]) financeiro = regras.VALORES[0];
             else if (comprometimentoPercent >= regras.LIMITES[1]) financeiro = regras.VALORES[1];
             else if (comprometimentoPercent >= regras.LIMITES[2]) financeiro = regras.VALORES[2];
             else if (comprometimentoPercent >= regras.LIMITES[3]) financeiro = regras.VALORES[3];
             else financeiro = regras.VALORES[4];
         } else {
-            const regras = metodologia.REGRAS.FINANCEIRO.PJ;
+            var regras = metodologia.REGRAS.FINANCEIRO.PJ;
             if (proporcaoRaw < regras.LIMITES[0]) financeiro = regras.VALORES[0];
             else if (proporcaoRaw < regras.LIMITES[1]) financeiro = regras.VALORES[1];
             else if (proporcaoRaw < regras.LIMITES[2]) financeiro = regras.VALORES[2];
@@ -191,10 +191,10 @@ function calcularFinanceiro(dados) {
 // ============================================
 
 function calcularDescontinuidade(dados) {
-    const { analisado } = dados;
-    const tempoMercado = calcularTempoMercado(analisado.data_abertura);
-    const regras = metodologia.REGRAS.DESCONTINUIDADE;
-    let descontinuidade = config.DEFAULTS.DESCONTINUIDADE;
+    var analisado = dados.analisado;
+    var tempoMercado = calcularTempoMercado(analisado.data_abertura);
+    var regras = metodologia.REGRAS.DESCONTINUIDADE;
+    var descontinuidade = config.DEFAULTS.DESCONTINUIDADE;
 
     if (tempoMercado < regras.LIMITES[0]) descontinuidade = regras.VALORES[0];
     else if (tempoMercado < regras.LIMITES[1]) descontinuidade = regras.VALORES[1];
@@ -207,10 +207,10 @@ function calcularDescontinuidade(dados) {
 }
 
 function calcularVeracidade(dados) {
-    const { analisado } = dados;
-    const situacao = (analisado.situacao || 'ATIVA').toUpperCase();
-    const regras = metodologia.REGRAS.VERACIDADE;
-    let veracidade = config.DEFAULTS.VERACIDADE;
+    var analisado = dados.analisado;
+    var situacao = (analisado.situacao || 'ATIVA').toUpperCase();
+    var regras = metodologia.REGRAS.VERACIDADE;
+    var veracidade = config.DEFAULTS.VERACIDADE;
 
     if (situacao === 'BAIXADA') veracidade = regras.BAIXADA;
     else if (situacao === 'SUSPENSA' || situacao === 'INAPTA') veracidade = regras.SUSPENSA;
@@ -219,35 +219,35 @@ function calcularVeracidade(dados) {
 }
 
 function calcularComportamental(dados) {
-    const { relacionamento } = dados;
-    const conhecimento = relacionamento.conhecimento || 'razoavel';
-    const experiencia = relacionamento.experiencia || 'neutra';
-    const meses = relacionamento.meses || 0;
+    var relacionamento = dados.relacionamento;
+    var conhecimento = relacionamento.conhecimento || 'razoavel';
+    var experiencia = relacionamento.experiencia || 'neutra';
+    var meses = relacionamento.meses || 0;
 
-    const regrasConhecimento = metodologia.REGRAS.COMPORTAMENTAL.CONHECIMENTO;
-    const regrasExperiencia = metodologia.REGRAS.COMPORTAMENTAL.EXPERIENCIA;
-    const regrasTempo = metodologia.REGRAS.COMPORTAMENTAL.TEMPO_RELACAO;
+    var regrasConhecimento = metodologia.REGRAS.COMPORTAMENTAL.CONHECIMENTO;
+    var regrasExperiencia = metodologia.REGRAS.COMPORTAMENTAL.EXPERIENCIA;
+    var regrasTempo = metodologia.REGRAS.COMPORTAMENTAL.TEMPO_RELACAO;
 
-    let fC = regrasConhecimento[conhecimento.toUpperCase()] || 1.0;
-    let fE = regrasExperiencia[experiencia.toUpperCase()] || 1.0;
+    var fC = regrasConhecimento[conhecimento.toUpperCase()] || 1.0;
+    var fE = regrasExperiencia[experiencia.toUpperCase()] || 1.0;
 
-    let fM = 1.0;
+    var fM = 1.0;
     if (meses >= regrasTempo.LIMITES[0]) fM = regrasTempo.VALORES[0];
     else if (meses >= regrasTempo.LIMITES[1]) fM = regrasTempo.VALORES[1];
     else if (meses >= regrasTempo.LIMITES[2]) fM = regrasTempo.VALORES[2];
     else if (meses >= regrasTempo.LIMITES[3]) fM = regrasTempo.VALORES[3];
     else fM = regrasTempo.VALORES[4];
 
-    let comportamental = Math.min(100, config.DEFAULTS.COMPORTAMENTAL * Math.max(0.2, Math.min(2.0, fM * fE * fC)));
+    var comportamental = Math.min(100, config.DEFAULTS.COMPORTAMENTAL * Math.max(0.2, Math.min(2.0, fM * fE * fC)));
 
     return { pontuacao: comportamental };
 }
 
 function calcularIntegridade(dados) {
-    const { analisado } = dados;
+    var analisado = dados.analisado;
     var porteAnalisado = normalizarPorte(analisado.porte) || analisado.porte || '';
-    const regras = metodologia.REGRAS.INTEGRIDADE;
-    let integridade = config.DEFAULTS.INTEGRIDADE;
+    var regras = metodologia.REGRAS.INTEGRIDADE;
+    var integridade = config.DEFAULTS.INTEGRIDADE;
 
     if (porteAnalisado === 'GRANDE' || porteAnalisado === 'GIGANTE') {
         integridade = regras.GRANDE;
@@ -260,9 +260,9 @@ function calcularIntegridade(dados) {
 }
 
 function calcularDeterioracao(dados) {
-    const { analisado } = dados;
-    const situacao = (analisado.situacao || 'ATIVA').toUpperCase();
-    let deterioracao = 0;
+    var analisado = dados.analisado;
+    var situacao = (analisado.situacao || 'ATIVA').toUpperCase();
+    var deterioracao = 0;
 
     if (situacao === 'BAIXADA') deterioracao = 90;
     else if (situacao === 'SUSPENSA' || situacao === 'INAPTA') deterioracao = 50;
@@ -271,18 +271,19 @@ function calcularDeterioracao(dados) {
 }
 
 function calcularRelacional(dados) {
-    const { analisado, solicitante } = dados;
+    var analisado = dados.analisado;
+    var solicitante = dados.solicitante;
     
     var porteAnalisado = normalizarPorte(analisado.porte) || analisado.porte || '';
     var porteSolicitante = normalizarPorte(solicitante.porte) || solicitante.porte || config.DEFAULTS.PORTE_SOLICITANTE;
 
     if (analisado.tipo === 'pessoa') {
-        const ordem = config.ORDEM_PORTE;
-        const sol = ordem[porteSolicitante] || 3;
-        const anal = 0;
-        const diferencaPorte = Math.abs(sol - anal);
-        const regras = metodologia.REGRAS.RELACIONAL.DIFERENCA;
-        let relacional = regras[diferencaPorte] || 80;
+        var ordem = config.ORDEM_PORTE;
+        var sol = ordem[porteSolicitante] || 3;
+        var anal = 0;
+        var diferencaPorte = Math.abs(sol - anal);
+        var regras = metodologia.REGRAS.RELACIONAL.DIFERENCA;
+        var relacional = regras[diferencaPorte] || 80;
         return { 
             pontuacao: relacional, 
             porte_solicitante: porteSolicitante, 
@@ -292,7 +293,7 @@ function calcularRelacional(dados) {
 
     if (!porteAnalisado || porteAnalisado === 'N/A' || porteAnalisado === '') {
         if (analisado.faturamento_anual && analisado.faturamento_anual > 0) {
-            const faturamento = analisado.faturamento_anual;
+            var faturamento = analisado.faturamento_anual;
             if (faturamento <= 81000) porteAnalisado = 'MEI';
             else if (faturamento <= 360000) porteAnalisado = 'ME';
             else if (faturamento <= 4800000) porteAnalisado = 'EPP';
@@ -304,13 +305,13 @@ function calcularRelacional(dados) {
         }
     }
 
-    const ordem = config.ORDEM_PORTE;
-    const sol = ordem[porteSolicitante] || 3;
-    const anal = ordem[porteAnalisado] || 3;
-    const diferencaPorte = Math.abs(sol - anal);
+    var ordem = config.ORDEM_PORTE;
+    var sol = ordem[porteSolicitante] || 3;
+    var anal = ordem[porteAnalisado] || 3;
+    var diferencaPorte = Math.abs(sol - anal);
 
-    const regras = metodologia.REGRAS.RELACIONAL.DIFERENCA;
-    let relacional = regras[diferencaPorte] || 80;
+    var regras = metodologia.REGRAS.RELACIONAL.DIFERENCA;
+    var relacional = regras[diferencaPorte] || 80;
 
     if (diferencaPorte >= 3) {
         relacional = Math.min(100, relacional * 1.2);
@@ -338,7 +339,7 @@ function calcularTempoMercado(dataAbertura) {
 }
 
 function getNivelRisco(contrib) {
-    const niveis = config.NIVEIS_RISCO;
+    var niveis = config.NIVEIS_RISCO;
     if (contrib >= niveis.CRITICO) return 'CRITICO';
     if (contrib >= niveis.ALTO) return 'ALTO';
     if (contrib >= niveis.MEDIO) return 'MEDIO';
@@ -352,37 +353,90 @@ function getNivelImpacto(dias) {
     return { nivel: 'Crítico', cor: '🔴' };
 }
 
+// ============================================================
+// 🔧 NOVA FUNÇÃO: AJUSTAR RISCOS CRÍTICOS
+// ============================================================
+function ajustarRiscosCriticos(topRiscos) {
+    // topRiscos é um array com os 4 maiores riscos
+    // Cada item tem { risco, pontuacao, contribuicao, nivel }
+    
+    // 1. Verifica se algum dos 4 é CRITICO
+    var temCritico = false;
+    var indiceCritico = -1;
+    for (var i = 0; i < topRiscos.length; i++) {
+        if (topRiscos[i].nivel === 'CRITICO') {
+            temCritico = true;
+            indiceCritico = i;
+            break;
+        }
+    }
+    
+    // Se não tiver crítico, retorna os riscos originais
+    if (!temCritico) return topRiscos;
+    
+    // 2. Pega os outros 3 riscos (excluindo o crítico)
+    var outrosRiscos = [];
+    for (var j = 0; j < topRiscos.length; j++) {
+        if (j !== indiceCritico) {
+            outrosRiscos.push(topRiscos[j]);
+        }
+    }
+    
+    // 3. Soma as contribuições dos outros 3
+    var somaOutros = 0;
+    for (var k = 0; k < outrosRiscos.length; k++) {
+        somaOutros += outrosRiscos[k].contribuicao;
+    }
+    
+    // 4. Calcula o novo percentual do risco crítico
+    var novoPercentual = 99 - somaOutros;
+    
+    // 5. Garante que o crítico não fique abaixo de 50% (para manter o peso)
+    if (novoPercentual < 50) novoPercentual = 50;
+    
+    // 6. Atualiza a contribuição do risco crítico
+    topRiscos[indiceCritico].contribuicao = Math.round(novoPercentual * 10) / 10;
+    topRiscos[indiceCritico].nivel = 'CRITICO';
+    
+    console.log('🔧 AJUSTE CRÍTICO: risco ' + topRiscos[indiceCritico].risco + ' ajustado para ' + topRiscos[indiceCritico].contribuicao + '% (soma outros: ' + somaOutros + '%)');
+    
+    return topRiscos;
+}
 // ============================================
 // FUNÇÃO PRINCIPAL: calcularRiscos
 // ============================================
 
 function calcularRiscos(dados) {
-    const situacaoRaw = (dados.analisado && dados.analisado.situacao) ? dados.analisado.situacao.toUpperCase() : 'ATIVA';
+    var situacaoRaw = (dados.analisado && dados.analisado.situacao) ? dados.analisado.situacao.toUpperCase() : 'ATIVA';
 
-    const palavrasCriticas = [
+    var palavrasCriticas = [
         'BAIXADA', 'INATIVA', 'CANCELADA', 'SUSPENSA', 'NULA',
         'LIQUIDAÇÃO', 'LIQUIDACAO', 'RECUPERAÇÃO', 'RECUPERACAO',
         'FALÊNCIA', 'FALENCIA', 'INTERVENÇÃO', 'INTERVENCAO',
         'INAPTA', 'INAPTIDÃO'
     ];
 
-    const isCritica = palavrasCriticas.some(function(palavra) {
-        return situacaoRaw.indexOf(palavra) !== -1;
-    });
+    var isCritica = false;
+    for (var i = 0; i < palavrasCriticas.length; i++) {
+        if (situacaoRaw.indexOf(palavrasCriticas[i]) !== -1) {
+            isCritica = true;
+            break;
+        }
+    }
 
     if (isCritica) {
-        const scoreGlobal = 95;
-        const recuperabilidade = 5;
-        const recomendacao = 'PARE';
+        var scoreGlobal = 95;
+        var recuperabilidade = 5;
+        var recomendacao = 'PARE';
 
-        const riscoCritico = {
+        var riscoCritico = {
             risco: 'SITUAÇÃO CRÍTICA',
             pontuacao: 100,
             contribuicao: 30,
             nivel: 'CRITICO'
         };
 
-        const riscos = [
+        var riscos = [
             riscoCritico,
             { risco: 'FINANCEIRO', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
             { risco: 'RESOLUTIVIDADE', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
@@ -396,12 +450,12 @@ function calcularRiscos(dados) {
             { risco: 'RISCO ENTRE AS PARTES', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' }
         ];
 
-        const topRiscos = [riscoCritico];
+        var topRiscos = [riscoCritico];
 
-        const porta = dados.porta_entrada || 'empresa';
-        const sub = dados.subsecao || 'unico';
-        const chaveTipo = porta + '_' + sub;
-        const tipoAnalise = DESCRICAO_PORTAS[chaveTipo] || 'Geral';
+        var porta = dados.porta_entrada || 'empresa';
+        var sub = dados.subsecao || 'unico';
+        var chaveTipo = porta + '_' + sub;
+        var tipoAnalise = DESCRICAO_PORTAS[chaveTipo] || 'Geral';
 
         return {
             score_global: scoreGlobal,
@@ -418,6 +472,7 @@ function calcularRiscos(dados) {
             metodologia: config.METODOLOGIA_VERSAO,
             percentual_comprometimento: 0,
             dias_comprometimento: 0,
+            nivel_impacto: { nivel: 'Crítico', cor: '🔴' },
             alerta: {
                 tipo: 'SITUACAO_CRITICA',
                 mensagem: 'A empresa está com situação "' + situacaoRaw + '". Negócios com essa situação são considerados inviáveis.',
@@ -426,13 +481,13 @@ function calcularRiscos(dados) {
         };
     }
 
-    const financeiroResult = calcularFinanceiro(dados);
-    const descontinuidadeResult = calcularDescontinuidade(dados);
-    const veracidadeResult = calcularVeracidade(dados);
-    const comportamentalResult = calcularComportamental(dados);
-    const integridadeResult = calcularIntegridade(dados);
-    const deterioracaoResult = calcularDeterioracao(dados);
-    const relacionalResult = calcularRelacional(dados);
+    var financeiroResult = calcularFinanceiro(dados);
+    var descontinuidadeResult = calcularDescontinuidade(dados);
+    var veracidadeResult = calcularVeracidade(dados);
+    var comportamentalResult = calcularComportamental(dados);
+    var integridadeResult = calcularIntegridade(dados);
+    var deterioracaoResult = calcularDeterioracao(dados);
+    var relacionalResult = calcularRelacional(dados);
 
     // ============================================================
     // PERCENTUAL DE COMPROMETIMENTO - Quem assume o compromisso?
@@ -452,7 +507,6 @@ function calcularRiscos(dados) {
     var ticketDiario = 0;
 
     if (isCompra) {
-        // COMPRA: o solicitante assume o compromisso (paga)
         if (dados.solicitante.tipo === 'pessoa' && dados.solicitante.renda && dados.solicitante.renda > 0) {
             ticketDiario = dados.solicitante.renda / 30;
         } else if (dados.solicitante.tipo === 'empresa' && dados.solicitante.faturamento_anual && dados.solicitante.faturamento_anual > 0) {
@@ -465,7 +519,6 @@ function calcularRiscos(dados) {
             ticketDiario = financeiroResult.ticket_estimado || 1000;
         }
     } else if (isVenda) {
-        // VENDA: o analisado assume o compromisso (paga/recebe)
         if (dados.analisado.tipo === 'pessoa' && dados.analisado.renda && dados.analisado.renda > 0) {
             ticketDiario = dados.analisado.renda / 30;
         } else if (dados.analisado.tipo === 'empresa' && dados.analisado.faturamento_anual && dados.analisado.faturamento_anual > 0) {
@@ -485,22 +538,27 @@ function calcularRiscos(dados) {
         percentualComprometimento = Math.round((valorParcela / ticketDiario) * 100);
     }
 
+    // 🔧 CORREÇÃO: dias_comprometimento considera valor da parcela se for parcelado
     var diasComprometimento = 0;
-    if (ticketDiario > 0 && valorNegocio > 0) {
-        diasComprometimento = Math.round((valorNegocio / ticketDiario) * 10) / 10;
+    var pagamento = dados.negocio.tipo_pagamento || 'avista';
+    var valorBaseParaImpacto = (pagamento === 'aprazo' || pagamento === 'a prazo') && parcelas > 1
+        ? valorParcela
+        : valorNegocio;
+
+    if (ticketDiario > 0 && valorBaseParaImpacto > 0) {
+        diasComprometimento = Math.round((valorBaseParaImpacto / ticketDiario) * 10) / 10;
     }
 
-    // 🔧 CORREÇÃO: Nível de impacto
     var nivelImpacto = getNivelImpacto(diasComprometimento);
 
     console.log('🧮 PERCENTUAL: valorParcela:', valorParcela, 'ticketDiario:', ticketDiario, 'percentual:', percentualComprometimento);
-    console.log('📆 DIAS COMPROMETIMENTO:', diasComprometimento, 'NÍVEL:', nivelImpacto.nivel);
+    console.log('📆 DIAS COMPROMETIMENTO (base:', valorBaseParaImpacto, '):', diasComprometimento, 'NÍVEL:', nivelImpacto.nivel);
 
-    const resolutividade = config.DEFAULTS.RESOLUTIVIDADE;
-    const contratual = 0;
-    const reputacional = config.DEFAULTS.REPUTACIONAL;
+    var resolutividade = config.DEFAULTS.RESOLUTIVIDADE;
+    var contratual = 0;
+    var reputacional = config.DEFAULTS.REPUTACIONAL;
 
-    const fatores = [
+    var fatores = [
         { nome: 'FINANCEIRO', pontuacao: financeiroResult.pontuacao, peso: metodologia.PESOS.FINANCEIRO },
         { nome: 'RESOLUTIVIDADE', pontuacao: resolutividade, peso: metodologia.PESOS.RESOLUTIVIDADE },
         { nome: 'DESCONTINUIDADE', pontuacao: descontinuidadeResult.pontuacao, peso: metodologia.PESOS.DESCONTINUIDADE },
@@ -513,45 +571,60 @@ function calcularRiscos(dados) {
         { nome: 'RISCO ENTRE AS PARTES', pontuacao: relacionalResult.pontuacao, peso: metodologia.PESOS.RELACIONAL }
     ];
 
-    const totalPonderado = fatores.reduce((acc, f) => acc + (f.pontuacao * f.peso), 0);
-    const scoreGlobal = Math.min(99, Math.max(1, Math.round(totalPonderado / 6.0 * 10) / 10));
-    const recuperabilidade = 100 - scoreGlobal;
+    var totalPonderado = 0;
+    for (var f = 0; f < fatores.length; f++) {
+        totalPonderado += fatores[f].pontuacao * fatores[f].peso;
+    }
+    var scoreGlobal = Math.min(99, Math.max(1, Math.round(totalPonderado / 6.0 * 10) / 10));
+    var recuperabilidade = 100 - scoreGlobal;
 
-    const fatorDivisor = totalPonderado > 0 ? totalPonderado : 1;
-    const riscos = fatores.map(f => {
-        const contribuicao = Math.round((f.pontuacao * f.peso / fatorDivisor) * scoreGlobal * 10) / 10;
-        return {
-            risco: f.nome,
-            pontuacao: f.pontuacao,
+    var fatorDivisor = totalPonderado > 0 ? totalPonderado : 1;
+    var riscos = [];
+    for (var f = 0; f < fatores.length; f++) {
+        var contribuicao = Math.round((fatores[f].pontuacao * fatores[f].peso / fatorDivisor) * scoreGlobal * 10) / 10;
+        riscos.push({
+            risco: fatores[f].nome,
+            pontuacao: fatores[f].pontuacao,
             contribuicao: contribuicao,
             nivel: getNivelRisco(contribuicao)
-        };
-    });
+        });
+    }
 
     // ============================================================
-    // 🔧 CORREÇÃO: RECOMENDAÇÃO considerando IMPACTO + PROBABILIDADE
+    // 🔧 RECOMENDAÇÃO considerando IMPACTO + PROBABILIDADE + RISCOS CRÍTICOS
     // ============================================================
     var recomendacao = 'SIGA';
 
-    // 1. Verifica o score (probabilidade)
-    if (scoreGlobal > 65) {
+    // 1. Verifica se algum risco é CRÍTICO (força PARE)
+    var temRiscoCritico = false;
+    for (var i = 0; i < riscos.length; i++) {
+        if (riscos[i].nivel === 'CRITICO') {
+            temRiscoCritico = true;
+            break;
+        }
+    }
+    if (temRiscoCritico) {
         recomendacao = 'PARE';
-    } else if (scoreGlobal >= 35 && scoreGlobal <= 65) {
-        recomendacao = 'ATENCAO';
+        console.log('⚠️ RISCO CRÍTICO detectado: forçando PARE');
     }
 
-    // 2. 🔧 Se o impacto for CRÍTICO (dias > 15), força PARE
+    // 2. Verifica o score (probabilidade)
+    if (!temRiscoCritico) {
+        if (scoreGlobal > 65) {
+            recomendacao = 'PARE';
+        } else if (scoreGlobal >= 35 && scoreGlobal <= 65) {
+            recomendacao = 'ATENCAO';
+        }
+    }
+
+    // 3. Se o impacto for CRÍTICO (dias > 15), força PARE
     if (diasComprometimento > 15) {
         recomendacao = 'PARE';
         console.log('⚠️ IMPACTO CRÍTICO (' + diasComprometimento + ' dias): forçando PARE');
-    }
-    // 3. Se o impacto for ALTO (dias > 7) e a recomendação for SIGA, sobe para ATENCAO
-    else if (diasComprometimento > 7 && recomendacao === 'SIGA') {
+    } else if (diasComprometimento > 7 && recomendacao === 'SIGA') {
         recomendacao = 'ATENCAO';
         console.log('⚠️ IMPACTO ALTO (' + diasComprometimento + ' dias): ajustando para ATENCAO');
     }
-    // 4. Se o impacto for MODERADO (dias > 3) e a recomendação for SIGA, mantém SIGA (já está)
-    // 5. Se o impacto for BAIXO (dias <= 3), mantém a recomendação original
 
     console.log('📊 RECOMENDAÇÃO FINAL:', recomendacao, '(score:', scoreGlobal, 'dias:', diasComprometimento, ')');
 
@@ -594,10 +667,20 @@ function calcularRiscos(dados) {
         }
     }
 
-    const porta = dados.porta_entrada || 'empresa';
-    const sub = dados.subsecao || 'unico';
-    const chaveTipo = porta + '_' + sub;
-    const tipoAnalise = DESCRICAO_PORTAS[chaveTipo] || 'Geral';
+    // ============================================================
+    // 🔧 APLICA AJUSTE DE RISCOS CRÍTICOS
+    // ============================================================
+    topRiscos = ajustarRiscosCriticos(topRiscos);
+
+    // ============================================================
+    // RISCO PRINCIPAL: o primeiro da lista ajustada
+    // ============================================================
+    var riscoPrincipal = (topRiscos[0] && topRiscos[0].risco) || 'FINANCEIRO';
+
+    var porta = dados.porta_entrada || 'empresa';
+    var sub = dados.subsecao || 'unico';
+    var chaveTipo = porta + '_' + sub;
+    var tipoAnalise = DESCRICAO_PORTAS[chaveTipo] || 'Geral';
 
     console.log('📊 MOTOR: score:', scoreGlobal, 'percentual:', percentualComprometimento, 'dias:', diasComprometimento);
 
@@ -605,7 +688,7 @@ function calcularRiscos(dados) {
         score_global: scoreGlobal,
         recuperabilidade: recuperabilidade,
         recomendacao: recomendacao,
-        risco_principal: (topRiscos[0] && topRiscos[0].risco) || 'FINANCEIRO',
+        risco_principal: riscoPrincipal,
         riscos: riscos,
         top_riscos: topRiscos,
         tipo_analise: tipoAnalise,
@@ -632,4 +715,3 @@ module.exports = {
     calcularTicketDiario,
     getNivelRisco
 };
-

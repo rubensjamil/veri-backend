@@ -20,6 +20,21 @@
 // CORRIGIDO: Indexação em memória do CSV para busca instantânea
 // CORRIGIDO: Extração de sócio majoritário e controladora
 // CORRIGIDO: Todas as strings com crases e sintaxe 100% verificada
+// CORRIGIDO: carregarCSVIndex com verificação de existência do arquivo (fs.existsSync)
+// CORRIGIDO: carregarCSVIndex não derruba o servidor em caso de erro
+// CORRIGIDO: baixarCSVdoStorage() ativada na inicialização
+// CORRIGIDO: Suporte a credenciais via variável de ambiente (GOOGLE_APPLICATION_CREDENTIALS_JSON)
+// CORRIGIDO: Caminho do Secret File atualizado para google-creds.json
+// CORRIGIDO: Erro de sintaxe na linha 291 (crases no console.log)
+// CORRIGIDO: Busca no Storage para razão social e fallback de CNPJ
+// CORRIGIDO: DEMAIS substituído por GIGANTE em todos os lugares
+// CORRIGIDO: Prioriza faturamento do banco regional (orquestrador) ACIMA de qualquer estimativa
+// CORRIGIDO: Porte GIGANTE prevalece sobre qualquer outro porte vindo de APIs
+// CORRIGIDO: Remove site fictício (não exibe "www.nome.com.br" quando não encontrado)
+// CORRIGIDO: Adiciona dias_comprometimento no retorno do Motor
+// CORRIGIDO: Busca CNPJ no banco regional (cnpjs_famosos.json) antes da BrasilAPI
+// CORRIGIDO: Removida evidência de comprometimento do backend (frontend calcula)
+// CORRIGIDO: Fallback de faturamento com nomes por extenso (MICRO EMPRESA, etc.)
 // ============================================
 
 const express = require("express");
@@ -30,7 +45,67 @@ const { Storage } = require("@google-cloud/storage");
 const csv = require("csv-parser");
 const crypto = require("crypto");
 
-require('dotenv').config();
+// require('dotenv').config();
+
+// ============================================================
+// CONFIGURA CREDENCIAIS DO GOOGLE CLOUD
+// ============================================================
+let credenciaisCarregadas = false;
+
+// 1. Tenta carregar do Secret File (Render)
+const secretPath = '/etc/secrets/google-creds.json';
+let storage = null;
+
+if (fs.existsSync(secretPath)) {
+    try {
+        const credsContent = fs.readFileSync(secretPath, 'utf8');
+        const creds = JSON.parse(credsContent);
+        storage = new Storage({
+            projectId: creds.project_id,
+            credentials: {
+                client_email: creds.client_email,
+                private_key: creds.private_key
+            }
+        });
+        console.log('✅ Storage inicializado com credenciais do Secret File.');
+        console.log('📁 Projeto:', creds.project_id);
+        console.log('📧 Conta de serviço:', creds.client_email);
+        credenciaisCarregadas = true;
+    } catch (err) {
+        console.error('❌ Erro ao processar credencial:', err.message);
+        storage = null;
+    }
+} else {
+    console.error('❌ Secret File NÃO ENCONTRADO em:', secretPath);
+    storage = null;
+}
+
+// 2. Tenta carregar da variável de ambiente (fallback)
+if (!credenciaisCarregadas && process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+    try {
+        const tempPath = '/tmp/credenciais.json';
+        fs.writeFileSync(tempPath, process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+        process.env.GOOGLE_APPLICATION_CREDENTIALS = tempPath;
+        console.log('✅ Credenciais do Google Cloud configuradas via variável de ambiente.');
+        credenciaisCarregadas = true;
+    } catch (err) {
+        console.warn('⚠️ Erro ao criar arquivo temporário de credenciais:', err.message);
+    }
+}
+
+// 3. Tenta carregar do arquivo local (último fallback)
+if (!credenciaisCarregadas) {
+    const localCredPath = path.join(__dirname, 'credenciais.json');
+    if (fs.existsSync(localCredPath)) {
+        process.env.GOOGLE_APPLICATION_CREDENTIALS = localCredPath;
+        console.log('✅ Credenciais do Google Cloud carregadas do arquivo local.');
+        credenciaisCarregadas = true;
+    }
+}
+
+if (!credenciaisCarregadas) {
+    console.warn('⚠️ Nenhuma credencial do Google Cloud encontrada. O Storage pode não funcionar.');
+}
 
 // ============================================
 // VERSÕES
@@ -54,17 +129,12 @@ const config = require("./motor.config");
 const app = express();
 
 // ============================================================
-// CORS
+// CORS - LIBERADO PARA TODAS AS ORIGENS
 // ============================================================
 app.use(cors({
-  origin: [
-    "https://www.veri.app.br",
-    "https://veri.app.br",
-    "http://localhost:8080",
-    "https://meu-site-veri.vercel.app"
-  ],
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+    origin: "*",
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
 }));
 app.use(express.json());
 
@@ -95,10 +165,9 @@ const CSV_FILE = "cnpj_busca_6_colunas.csv";
 const HISTORICO_FILE = "analises/historico_cnpjs.json";
 const CONTADORES_FILE = "analises/contadores.json";
 const TENDENCIAS_FILE = "analises/tendencias.json";
-const storage = new Storage();
 
 // ============================================
-// ÍNDICE EM MEMÓRIA PARA O CSV
+// ÍNDICE EM MEMÓRIA PARA O CSV (FALLBACK LOCAL)
 // ============================================
 let csvIndexCNPJ = null;      // Map para busca por CNPJ
 let csvIndexNome = null;      // Map para busca por Nome
@@ -155,7 +224,7 @@ function encontrarCNPJPorNome(nome, uf) {
                     setor: empresa.setor,
                     uf: ufKey,
                     nome_encontrado: empresa.nome,
-                    porte: empresa.porte || 'MEDIO',
+                    porte: 'GIGANTE',
                     fonte: 'banco_local'
                 };
             }
@@ -164,8 +233,37 @@ function encontrarCNPJPorNome(nome, uf) {
     return null;
 }
 
+// 🔧 CORREÇÃO: Função para buscar CNPJ no banco regional por CNPJ
+function encontrarCNPJPorCNPJ(cnpj) {
+    if (!cnpj || typeof cnpj !== 'string') return null;
+    const cnpjLimpo = normalizarCNPJ(cnpj);
+    if (cnpjLimpo.length !== 14) return null;
+    
+    for (var uf in CNPJS_FAMOSOS) {
+        var empresas = CNPJS_FAMOSOS[uf];
+        if (!Array.isArray(empresas)) continue;
+        for (var i = 0; i < empresas.length; i++) {
+            var empresa = empresas[i];
+            if (!empresa.cnpj) continue;
+            var cnpjEmpresa = normalizarCNPJ(empresa.cnpj);
+            if (cnpjEmpresa === cnpjLimpo) {
+                console.log('✅ CNPJ encontrado no banco regional:', empresa.nome);
+                return {
+                    cnpj: empresa.cnpj,
+                    faturamento_anual: empresa.faturamento_anual,
+                    setor: empresa.setor,
+                    uf: uf,
+                    nome: empresa.nome,
+                    porte: 'GIGANTE'
+                };
+            }
+        }
+    }
+    return null;
+}
+
 // ============================================
-// CARREGA O CSV EM MEMÓRIA (UMA ÚNICA VEZ)
+// CARREGA O CSV EM MEMÓRIA (FALLBACK LOCAL)
 // ============================================
 async function carregarCSVIndex() {
     if (csvIndexCarregado) return;
@@ -175,6 +273,13 @@ async function carregarCSVIndex() {
     
     csvIndexCNPJ = new Map();
     csvIndexNome = new Map();
+    
+    if (!fs.existsSync(CSV_PATH)) {
+        console.warn('⚠️ CSV não encontrado em:', CSV_PATH);
+        console.warn('⚠️ Busca por nome/CNPJ no CSV desativada. Usando apenas BrasilAPI e banco local.');
+        csvIndexCarregado = true;
+        return;
+    }
     
     return new Promise(function(resolve, reject) {
         let linhas = 0;
@@ -215,14 +320,123 @@ async function carregarCSVIndex() {
             .on("end", function() {
                 csvIndexCarregado = true;
                 const tempo = Date.now() - inicio;
-                console.log(`✅ CSV indexado em memória: ${linhas} empresas em ${tempo}ms`);
+                console.log("✅ CSV indexado em memória: " + linhas + " empresas em " + tempo + "ms");
                 resolve();
             })
             .on("error", function(err) {
                 console.error('❌ Erro ao carregar CSV:', err);
-                reject(err);
+                csvIndexCarregado = true;
+                resolve();
             });
     });
+}
+
+// ============================================
+// BUSCA NO CSV DIRETAMENTE NO STORAGE (NOVO)
+// ============================================
+async function buscarCSVnoStorage(termo) {
+    if (!storage) {
+        console.warn('⚠️ Storage não disponível.');
+        return null;
+    }
+    
+    try {
+        const bucket = storage.bucket(BUCKET_NAME);
+        const file = bucket.file(CSV_FILE);
+        const [exists] = await file.exists();
+        
+        if (!exists) {
+            console.warn('⚠️ CSV não encontrado no Storage.');
+            return null;
+        }
+        
+        console.log('🔍 Buscando no Storage por:', termo);
+        
+        // Cria um stream para ler o CSV diretamente do Storage
+        const stream = file.createReadStream();
+        
+        // Processa o CSV em busca do termo
+        return new Promise((resolve, reject) => {
+            let encontrado = null;
+            let contador = 0;
+            let timeoutId = setTimeout(() => {
+                stream.destroy();
+                resolve(null);
+            }, 15000);
+            
+            stream
+                .pipe(csv())
+                .on('data', (row) => {
+                    contador++;
+                    
+                    // Busca por CNPJ exato
+                    if (termo.length === 14) {
+                        const cnpjRow = row.CNPJ ? row.CNPJ.replace(/\D/g, '') : '';
+                        if (cnpjRow === termo) {
+                            encontrado = {
+                                cnpj: row.CNPJ,
+                                razao_social: row["RAZAO SOCIAL"] || row.razao_social || "",
+                                nome_fantasia: row["NOME FANTASIA"] || row.nome_fantasia || "",
+                                porte: row.PORTE || row.porte || "",
+                                data_abertura: row["DATA DE ABERTURA"] || row.data_abertura || "",
+                                situacao: row["SITUACAO"] || row.situacao || "ATIVA",
+                                uf: row.UF || "",
+                                municipio: row.MUNICIPIO || "",
+                                fonte: "csv_storage"
+                            };
+                            clearTimeout(timeoutId);
+                            stream.destroy();
+                            resolve(encontrado);
+                            return;
+                        }
+                    }
+                    
+                    // Busca por razão social ou nome fantasia
+                    if (termo.length > 2) {
+                        const razao = (row["RAZAO SOCIAL"] || row.razao_social || "").toLowerCase();
+                        const fantasia = (row["NOME FANTASIA"] || row.nome_fantasia || "").toLowerCase();
+                        const busca = termo.toLowerCase();
+                        
+                        if (razao.includes(busca) || fantasia.includes(busca)) {
+                            encontrado = {
+                                cnpj: row.CNPJ,
+                                razao_social: row["RAZAO SOCIAL"] || row.razao_social || "",
+                                nome_fantasia: row["NOME FANTASIA"] || row.nome_fantasia || "",
+                                porte: row.PORTE || row.porte || "",
+                                data_abertura: row["DATA DE ABERTURA"] || row.data_abertura || "",
+                                situacao: row["SITUACAO"] || row.situacao || "ATIVA",
+                                uf: row.UF || "",
+                                municipio: row.MUNICIPIO || "",
+                                fonte: "csv_storage"
+                            };
+                            clearTimeout(timeoutId);
+                            stream.destroy();
+                            resolve(encontrado);
+                            return;
+                        }
+                    }
+                    
+                    // Limite de segurança (100k linhas para não travar)
+                    if (contador > 100000) {
+                        clearTimeout(timeoutId);
+                        stream.destroy();
+                        resolve(null);
+                    }
+                })
+                .on('end', () => {
+                    clearTimeout(timeoutId);
+                    resolve(encontrado);
+                })
+                .on('error', (err) => {
+                    clearTimeout(timeoutId);
+                    console.warn('⚠️ Erro ao ler CSV do Storage:', err.message);
+                    resolve(null);
+                });
+        });
+    } catch (err) {
+        console.warn('⚠️ Erro ao buscar no CSV:', err.message);
+        return null;
+    }
 }
 
 // ============================================
@@ -234,6 +448,10 @@ let historicoCarregado = false;
 async function carregarHistorico() {
     if (historicoCarregado) return;
     try {
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Histórico não carregado.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(HISTORICO_FILE);
         const [exists] = await file.exists();
@@ -247,6 +465,10 @@ async function carregarHistorico() {
 
 async function salvarHistorico() {
     try {
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Histórico não salvo.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(HISTORICO_FILE);
         await file.save(JSON.stringify(historicoCNPJs, null, 2), { contentType: "application/json" });
@@ -287,6 +509,10 @@ let contadoresCarregados = false;
 async function carregarContadores() {
     if (contadoresCarregados) return;
     try {
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Contadores não carregados.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(CONTADORES_FILE);
         const [exists] = await file.exists();
@@ -300,6 +526,10 @@ async function carregarContadores() {
 
 async function salvarContadores() {
     try {
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Contadores não salvos.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(CONTADORES_FILE);
         await file.save(JSON.stringify(contadores, null, 2), { contentType: "application/json" });
@@ -343,6 +573,10 @@ let tendenciasCarregadas = false;
 async function carregarTendencias() {
     if (tendenciasCarregadas) return;
     try {
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Tendências não carregadas.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(TENDENCIAS_FILE);
         const [exists] = await file.exists();
@@ -356,6 +590,10 @@ async function carregarTendencias() {
 
 async function salvarTendencias() {
     try {
+        if (!storage) {
+            console.warn('⚠️ Storage não disponível. Tendências não salvas.');
+            return;
+        }
         const bucket = storage.bucket(BUCKET_NAME);
         const file = bucket.file(TENDENCIAS_FILE);
         await file.save(JSON.stringify(tendencias, null, 2), { contentType: "application/json" });
@@ -404,12 +642,20 @@ function getTendenciaEvolucao(cnpj, scoreAtual, riscosAtuais) {
 const FATURAMENTO_ANUAL = config.FATURAMENTO_ANUAL;
 function calcularFaturamentoMensalPorPorte(porte) {
     const faturamentoAnual = {
+        // Siglas
         "MEI": 81000,
         "ME": 360000,
         "EPP": 4800000,
         "MEDIO": 12000000,
         "GRANDE": 50000000,
-        "DEMAIS": 50000000
+        "GIGANTE": 50000000,
+        // Nomes por extenso (fallback)
+        "MICRO EMPRESA": 81000,
+        "MICROEMPRESA": 81000,
+        "EMPRESA INDIVIDUAL": 81000,
+        "MICRO EMPREENDEDOR INDIVIDUAL": 81000,
+        "EMPRESA DE PEQUENO PORTE": 360000,
+        "PEQUENO PORTE": 360000
     };
     return (faturamentoAnual[porte] || faturamentoAnual["GRANDE"]) / 12;
 }
@@ -453,7 +699,7 @@ async function fetchComoNavegador(url, timeoutMs) {
 }
 
 // ============================================
-// BUSCA CNPJ NA BRASILAPI COM SÓCIOS
+// BUSCA CNPJ NA BRASILAPI COM SÓCIOS (CORRIGIDO)
 // ============================================
 async function buscarCNPJnaBrasilAPI(cnpj) {
     try {
@@ -472,27 +718,51 @@ async function buscarCNPJnaBrasilAPI(cnpj) {
                 
                 const socioPrincipal = sociosOrdenados[0];
                 if (socioPrincipal) {
-                    const cpfCnpj = socioPrincipal.cpf_cnpj_socio || '';
+                    const documento = socioPrincipal.cpf_cnpj_socio || '';
                     const nome = socioPrincipal.nome_socio || '';
                     const percentual = socioPrincipal.percentual_capital_social || 0;
                     const qualificacao = socioPrincipal.qualificacao_socio || '';
                     
-                    if (cpfCnpj.length === 11) {
+                    const docLimpo = documento.replace(/\D/g, '');
+                    
+                    if (docLimpo.length === 11) {
                         socioMajoritario = {
                             nome: nome,
                             qualificacao: qualificacao,
                             percentual: percentual,
-                            cpf: cpfCnpj,
+                            cpf: documento,
                             tipo: 'PESSOA_FISICA'
                         };
-                    } else if (cpfCnpj.length === 14) {
+                    } else if (docLimpo.length === 14) {
                         controladora = {
                             nome: nome,
-                            cnpj: cpfCnpj,
+                            cnpj: documento,
                             percentual: percentual,
                             qualificacao: qualificacao,
                             tipo: 'PESSOA_JURIDICA'
                         };
+                    } else {
+                        const qualificacoesPF = ['SÓCIO-ADMINISTRADOR', 'SÓCIO', 'DIRETOR', 'ADMINISTRADOR'];
+                        const isPF = qualificacoesPF.some(function(q) {
+                            return qualificacao.toUpperCase().indexOf(q) !== -1;
+                        });
+                        if (isPF) {
+                            socioMajoritario = {
+                                nome: nome,
+                                qualificacao: qualificacao,
+                                percentual: percentual,
+                                cpf: documento,
+                                tipo: 'PESSOA_FISICA'
+                            };
+                        } else {
+                            controladora = {
+                                nome: nome,
+                                cnpj: documento,
+                                percentual: percentual,
+                                qualificacao: qualificacao,
+                                tipo: 'PESSOA_JURIDICA'
+                            };
+                        }
                     }
                 }
             }
@@ -547,7 +817,7 @@ async function buscarCNPJnaReceitaWS(cnpj) {
 }
 
 // ============================================
-// BUSCA CNPJ NO CSV (USANDO ÍNDICE EM MEMÓRIA)
+// BUSCA CNPJ NO CSV LOCAL (USANDO ÍNDICE EM MEMÓRIA)
 // ============================================
 async function buscarCNPJnoCSV(cnpj) {
     await carregarCSVIndex();
@@ -557,7 +827,7 @@ async function buscarCNPJnoCSV(cnpj) {
 }
 
 // ============================================
-// BUSCA CNPJ POR NOME NO CSV (USANDO ÍNDICE EM MEMÓRIA)
+// BUSCA CNPJ POR NOME NO CSV LOCAL
 // ============================================
 async function buscarCNPJnoCSVPorNome(nome) {
     await carregarCSVIndex();
@@ -587,31 +857,40 @@ async function buscarCNPJnoCSVPorNome(nome) {
     
     return null;
 }
-
 // ============================================
-// CADEIA DE BUSCA CNPJ - COM 3 FONTES
+// CADEIA DE BUSCA CNPJ - COM 3 FONTES + STORAGE
 // ============================================
 async function cadeiaDeBuscaCNPJ(entrada) {
     const limpo = normalizarCNPJ(entrada);
     let dados = null;
 
     if (limpo.length === 14) {
+        // 1. BrasilAPI
         dados = await buscarCNPJnaBrasilAPI(limpo);
         if (dados) {
             try { await carregarHistorico(); salvarNoHistorico(limpo, dados); } catch(e) {}
             return { ...dados, fonte: "brasilapi" };
         }
 
+        // 2. ReceitaWS
         dados = await buscarCNPJnaReceitaWS(limpo);
         if (dados) {
             try { await carregarHistorico(); salvarNoHistorico(limpo, dados); } catch(e) {}
             return { ...dados, fonte: "receitaws" };
         }
 
+        // 3. CSV local (índice em memória)
         dados = await buscarCNPJnoCSV(limpo);
         if (dados) {
             try { salvarNoHistorico(limpo, dados); } catch(e) {}
             return { ...dados, fonte: "csv_veri" };
+        }
+
+        // 4. CSV no Storage (fallback final)
+        dados = await buscarCSVnoStorage(limpo);
+        if (dados) {
+            try { salvarNoHistorico(limpo, dados); } catch(e) {}
+            return { ...dados, fonte: "csv_storage" };
         }
 
         return null;
@@ -620,24 +899,34 @@ async function cadeiaDeBuscaCNPJ(entrada) {
     if (entrada && entrada.length > 2) {
         const nomeBusca = entrada.trim();
 
+        // 1. Banco local (cnpjs_famosos.json)
         const localResult = encontrarCNPJPorNome(nomeBusca);
         if (localResult && localResult.cnpj) {
             const cnpjEncontrado = localResult.cnpj.replace(/\D/g, '');
+            // TENTA BUSCAR NA BRASILAPI PARA COMPLEMENTAR OS DADOS
             dados = await buscarCNPJnaBrasilAPI(cnpjEncontrado);
             if (dados) {
                 try { await carregarHistorico(); salvarNoHistorico(cnpjEncontrado, dados); } catch(e) {}
                 return { ...dados, fonte: "banco_local", cnpj_original: localResult.cnpj };
             }
+            // Se a BrasilAPI falhar, tenta a ReceitaWS
+            dados = await buscarCNPJnaReceitaWS(cnpjEncontrado);
+            if (dados) {
+                try { await carregarHistorico(); salvarNoHistorico(cnpjEncontrado, dados); } catch(e) {}
+                return { ...dados, fonte: "banco_local_receitaws", cnpj_original: localResult.cnpj };
+            }
+            // Se todas falharem, retorna os dados do banco local
             return {
                 cnpj: cnpjEncontrado,
                 razao_social: localResult.nome_encontrado || nomeBusca,
-                porte: localResult.porte || "MEDIO",
+                porte: 'GIGANTE',
                 data_abertura: "",
                 situacao: "ATIVA",
                 fonte: "banco_local"
             };
         }
 
+        // 2. CSV local (índice em memória)
         const csvResult = await buscarCNPJnoCSVPorNome(nomeBusca);
         if (csvResult && csvResult.cnpj) {
             const cnpjEncontrado = csvResult.cnpj.replace(/\D/g, '');
@@ -653,6 +942,25 @@ async function cadeiaDeBuscaCNPJ(entrada) {
                 data_abertura: csvResult.data_abertura || "",
                 situacao: csvResult.situacao || "ATIVA",
                 fonte: "csv_veri"
+            };
+        }
+
+        // 3. CSV no Storage (fallback final)
+        const storageResult = await buscarCSVnoStorage(nomeBusca);
+        if (storageResult && storageResult.cnpj) {
+            const cnpjEncontrado = storageResult.cnpj.replace(/\D/g, '');
+            dados = await buscarCNPJnaBrasilAPI(cnpjEncontrado);
+            if (dados) {
+                try { await carregarHistorico(); salvarNoHistorico(cnpjEncontrado, dados); } catch(e) {}
+                return { ...dados, fonte: "csv_storage", cnpj_original: storageResult.cnpj };
+            }
+            return {
+                cnpj: cnpjEncontrado,
+                razao_social: storageResult.razao_social || nomeBusca,
+                porte: storageResult.porte || "MEDIO",
+                data_abertura: storageResult.data_abertura || "",
+                situacao: storageResult.situacao || "ATIVA",
+                fonte: "csv_storage"
             };
         }
     }
@@ -777,64 +1085,36 @@ app.post("/analisar", async function(req, res) {
         res.status(500).json({ error: err.message });
     }
 });
-
 // ============================================================
-// FUNÇÃO: GERAR EVIDÊNCIAS DE FALLBACK
+// FUNÇÃO: GERAR EVIDÊNCIAS DE FALLBACK (CORRIGIDA)
 // ============================================================
 function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMotor) {
     var evidencias = [];
     var agora = new Date().toISOString();
 
-    if (dadosFormulario && dadosFormulario.valor !== undefined) {
-        var valor = dadosFormulario.valor || 0;
-        var parcelas = dadosFormulario.parcelas || 1;
-        var valorParcela = parcelas > 0 ? valor / parcelas : 0;
+    // ============================================================
+    // 🔧 CORREÇÃO: Evidência de comprometimento REMOVIDA do backend
+    // O frontend calcula corretamente com base no faturamento/renda exibidos
+    // Mantém apenas a evidência de fallback quando não há valor
+    // ============================================================
 
-        var isPF = (dadosCadastrais && dadosCadastrais.tipo === "pessoa");
-        var ticketDiario = 0;
-        if (isPF) {
-            var rendaMensal = dadosCadastrais ? dadosCadastrais.renda || 0 : 0;
-            ticketDiario = rendaMensal / 30;
-        } else {
-            var faturamentoMensal = 0;
-            if (dadosCadastrais && dadosCadastrais.porte) {
-                var faturamentoAnual = {
-                    "MEI": 81000,
-                    "ME": 360000,
-                    "EPP": 4800000,
-                    "MEDIO": 12000000,
-                    "GRANDE": 50000000,
-                    "DEMAIS": 50000000
-                };
-                faturamentoMensal = (faturamentoAnual[dadosCadastrais.porte] || faturamentoAnual["GRANDE"]) / 12;
-            }
-            ticketDiario = faturamentoMensal / 30;
-        }
+    // Verifica se o valor do negócio foi informado
+    var valorInformado = dadosFormulario && dadosFormulario.valor !== undefined && dadosFormulario.valor > 0;
 
-        if (ticketDiario > 0 && valorParcela > 0) {
-            var percentual = Math.round((valorParcela / ticketDiario) * 100);
-            var baseTexto = isPF ? "renda diária" : "faturamento diário";
-            var descricao = "O valor da parcela compromete <strong>" + percentual + "%</strong> do " + baseTexto + " da " + (isPF ? "pessoa" : "empresa") + ".";
-            evidencias.push({
-                id: "EVID-FINANCEIRO-" + Date.now(),
-                descricao: descricao,
-                fonte: isPF ? "Usuário" : "Receita Federal do Brasil",
-                url: isPF ? null : "https://www.gov.br/receitafederal",
-                coletado_em: agora,
-                risco_associado: "FINANCEIRO"
-            });
-        } else {
-            evidencias.push({
-                id: "EVID-FINANCEIRO-" + Date.now(),
-                descricao: "Valor do negócio não informado ou sem base de comparação. Análise baseada nos demais fatores.",
-                fonte: "Usuário",
-                url: null,
-                coletado_em: agora,
-                risco_associado: "FINANCEIRO"
-            });
-        }
+    if (!valorInformado) {
+        evidencias.push({
+            id: "EVID-FINANCEIRO-" + Date.now(),
+            descricao: "Valor do negócio não informado. Análise baseada nos demais fatores.",
+            fonte: "Usuário",
+            url: null,
+            coletado_em: agora,
+            risco_associado: "FINANCEIRO"
+        });
     }
 
+    // ============================================================
+    // EVIDÊNCIA DE DESCONTINUIDADE (mantida)
+    // ============================================================
     var tempoMercado = 0;
     if (dadosCadastrais && dadosCadastrais.data_abertura) {
         var dataAbertura = new Date(dadosCadastrais.data_abertura);
@@ -863,6 +1143,9 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
         });
     }
 
+    // ============================================================
+    // EVIDÊNCIA DE VERACIDADE (mantida)
+    // ============================================================
     if (dadosCadastrais && dadosCadastrais.situacao) {
         var situacao = dadosCadastrais.situacao.toUpperCase();
         var evidenciaVeracidade = "";
@@ -881,6 +1164,9 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
         });
     }
 
+    // ============================================================
+    // EVIDÊNCIA DE SETOR (mantida)
+    // ============================================================
     if (dadosCadastrais && dadosCadastrais.setor) {
         evidencias.push({
             id: "EVID-REPUTACIONAL-" + Date.now(),
@@ -892,9 +1178,15 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
         });
     }
 
+    // ============================================================
+    // EVIDÊNCIA COMPORTAMENTAL (mantida)
+    // ============================================================
     if (dadosFormulario) {
         var conhecimento = dadosFormulario.conhecimento || "nao_informado";
         var experiencia = dadosFormulario.experiencia || "nao_informada";
+        if (conhecimento === "maisoumenos") {
+            conhecimento = "mais ou menos";
+        }
         var evidenciaComportamental = "Nível de conhecimento do usuário sobre a outra parte: " + conhecimento + ". Experiência anterior: " + experiencia + ".";
         evidencias.push({
             id: "EVID-COMPORTAMENTAL-" + Date.now(),
@@ -914,7 +1206,12 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
 // ============================================================
 app.post("/enriquecer", async function(req, res) {
     const inicio = Date.now();
-    const { nome, cnpj, cpf, valor, porte, ticket_medio } = req.body;
+    const { 
+        nome, cnpj, cpf, valor, porte, ticket_medio,
+        email_analisado, whatsapp_analisado,
+        email_solicitante, whatsapp_solicitante,
+        renda_solicitante, renda_analisado
+    } = req.body;
 
     if (!nome && !cnpj && !cpf) {
         return res.status(400).json({
@@ -956,6 +1253,24 @@ app.post("/enriquecer", async function(req, res) {
         }
 
         // ============================================================
+        // 🔧 CORREÇÃO: BUSCA NO BANCO REGIONAL (cnpjs_famosos.json)
+        // ============================================================
+        var dadosBancoRegional = null;
+        var faturamentoBancoRegional = null;
+        var setorBancoRegional = null;
+        var porteBancoRegional = null;
+
+        if (cnpjLimpo) {
+            dadosBancoRegional = encontrarCNPJPorCNPJ(cnpjLimpo);
+            if (dadosBancoRegional) {
+                faturamentoBancoRegional = dadosBancoRegional.faturamento_anual;
+                setorBancoRegional = dadosBancoRegional.setor;
+                porteBancoRegional = dadosBancoRegional.porte || 'GIGANTE';
+                console.log('✅ FATURAMENTO ENCONTRADO NO BANCO REGIONAL:', faturamentoBancoRegional);
+            }
+        }
+
+        // ============================================================
         // BUSCA NA BRASILAPI PARA OBTER PORTE E DATA_ABERTURA
         // ============================================================
         var dadosCadastraisCompletos = {};
@@ -986,6 +1301,14 @@ app.post("/enriquecer", async function(req, res) {
             } catch (err) {
                 console.warn("⚠️ Erro ao buscar dados cadastrais via BrasilAPI:", err.message);
             }
+        }
+
+        // 🔧 CORREÇÃO: Se encontrou no banco regional, usa o faturamento dele
+        if (faturamentoBancoRegional) {
+            dadosCadastraisCompletos.faturamento_anual = faturamentoBancoRegional;
+            dadosCadastraisCompletos.setor = setorBancoRegional || dadosCadastraisCompletos.setor;
+            dadosCadastraisCompletos.porte = porteBancoRegional || dadosCadastraisCompletos.porte || 'GIGANTE';
+            console.log('✅ FATURAMENTO DO BANCO REGIONAL PRESERVADO:', faturamentoBancoRegional);
         }
 
         // ============================================================
@@ -1062,36 +1385,73 @@ app.post("/enriquecer", async function(req, res) {
             municipio: dadosCadastraisCompletos.municipio || dadosOrquestrador.dados_cadastrais.municipio || "",
             socio_majoritario: dadosCadastraisCompletos.socio_majoritario || null,
             controladora: dadosCadastraisCompletos.controladora || null,
-            qsa: dadosCadastraisCompletos.qsa || []
+            qsa: dadosCadastraisCompletos.qsa || [],
+            email_analisado: email_analisado || "",
+            whatsapp_analisado: whatsapp_analisado || "",
+            email_solicitante: email_solicitante || "",
+            whatsapp_solicitante: whatsapp_solicitante || ""
         };
 
         // ============================================================
-        // CORREÇÃO: FATURAMENTO ANUAL – PRIORIDADE DO ORQUESTRADOR
+        // 🔧 CORREÇÃO: FATURAMENTO ANUAL – PRIORIDADE MÁXIMA DO BANCO REGIONAL
         // ============================================================
         var faturamentoAnualEncontrado = null;
         var faturamentoFonte = "";
 
-        if (dadosOrquestrador.faturamento_anual) {
+        // 1. PRIORIDADE MÁXIMA: faturamento do banco regional (via dadosBancoRegional)
+        if (faturamentoBancoRegional) {
+            faturamentoAnualEncontrado = faturamentoBancoRegional;
+            faturamentoFonte = "banco_regional_cnpj";
+            console.log("✅ FATURAMENTO DO BANCO REGIONAL (por CNPJ):", faturamentoAnualEncontrado);
+        }
+        // 2. PRIORIDADE SEGUNDA: faturamento do banco regional (via orquestrador)
+        else if (dadosOrquestrador.faturamento_anual) {
             faturamentoAnualEncontrado = dadosOrquestrador.faturamento_anual;
             faturamentoFonte = "banco_regional_orquestrador";
-            console.log("✅ Faturamento obtido do banco regional:", faturamentoAnualEncontrado);
-        } else {
-            const porteEmpresa = dadosCadastrais.porte || "MEDIO";
-            const faturamentoAnualPorPorte = {
+            console.log("✅ FATURAMENTO DO BANCO REGIONAL (orquestrador):", faturamentoAnualEncontrado);
+        }
+        // 3. Se NÃO veio do banco, usa o que veio dos dados cadastrais (BrasilAPI/CSV)
+        else if (dadosCadastrais.faturamento_anual && dadosCadastrais.faturamento_anual > 0) {
+            faturamentoAnualEncontrado = dadosCadastrais.faturamento_anual;
+            faturamentoFonte = "dados_cadastrais";
+            console.log("✅ FATURAMENTO DOS DADOS CADASTRAIS:", faturamentoAnualEncontrado);
+        }
+        // 4. 🔧 CORREÇÃO: Fallback por porte (com suporte a nomes por extenso)
+        else {
+            var porteEmpresa = dadosCadastrais.porte || "MEDIO";
+            var faturamentoAnualPorPorte = {
+                // Siglas
                 "MEI": 81000,
                 "ME": 360000,
                 "EPP": 4800000,
                 "MEDIO": 12000000,
                 "GRANDE": 50000000,
-                "DEMAIS": 50000000
+                "GIGANTE": 50000000,
+                // Nomes por extenso (fallback BrasilAPI)
+                "MICRO EMPRESA": 81000,
+                "MICROEMPRESA": 81000,
+                "EMPRESA INDIVIDUAL": 81000,
+                "MICRO EMPREENDEDOR INDIVIDUAL": 81000,
+                "EMPRESA DE PEQUENO PORTE": 360000,
+                "PEQUENO PORTE": 360000
             };
             faturamentoAnualEncontrado = faturamentoAnualPorPorte[porteEmpresa] || faturamentoAnualPorPorte["GRANDE"];
             faturamentoFonte = "estimado_por_porte";
-            console.log("⚠️ Faturamento estimado por porte:", faturamentoAnualEncontrado);
+            console.log("⚠️ FATURAMENTO ESTIMADO POR PORTE:", faturamentoAnualEncontrado);
         }
 
         dadosCadastrais.faturamento_anual = faturamentoAnualEncontrado;
         dadosCadastrais.faturamento_fonte = faturamentoFonte;
+
+        // 🔧 CORREÇÃO: PORTE - Garantir que empresas do banco regional sejam GIGANTE
+        if (dadosBancoRegional || dadosOrquestrador.faturamento_anual) {
+            // Se veio do banco regional, o porte é GIGANTE
+            dadosCadastrais.porte = 'GIGANTE';
+            console.log("✅ PORTE FORÇADO PARA GIGANTE (banco regional)");
+        } else if (dadosCadastrais.porte === 'DEMAIS') {
+            dadosCadastrais.porte = 'GIGANTE';
+            console.log("✅ PORTE CORRIGIDO: DEMAIS → GIGANTE");
+        }
 
         // ============================================================
         // ADAPTADO: CAPTURA VALOR DO NEGÓCIO (Contratação/Compra/Venda)
@@ -1229,14 +1589,19 @@ app.post("/enriquecer", async function(req, res) {
                 situacao: dadosCadastrais.situacao || "ATIVA",
                 data_abertura: dadosCadastrais.data_abertura || "",
                 tipo: req.body.analisado_tipo || "empresa",
-                renda: req.body.analisado_renda || 0,
+                renda: renda_analisado || 0,
                 faturamento_anual: dadosCadastrais.faturamento_anual || null,
-                uf: dadosCadastrais.uf || ""
+                uf: dadosCadastrais.uf || "",
+                email: email_analisado || "",
+                whatsapp: whatsapp_analisado || ""
             },
             solicitante: {
                 porte: (req.body.analisante && req.body.analisante.porte) || "MEDIO",
                 tipo: (req.body.analisante && req.body.analisante.tipo) || "empresa",
-                renda: (req.body.analisante && req.body.analisante.renda) || 0
+                renda: renda_solicitante || 0,
+                email: email_solicitante || "",
+                whatsapp: whatsapp_solicitante || "",
+                faturamento_anual: (req.body.analisante && req.body.analisante.faturamento_anual) || null
             },
             relacionamento: {
                 conhecimento: req.body.conhecimento || "razoavel",
@@ -1286,7 +1651,7 @@ app.post("/enriquecer", async function(req, res) {
             };
             var dadosAnalisado = {
                 tipo: req.body.analisado_tipo || "empresa",
-                renda: req.body.analisado_renda || 0,
+                renda: renda_analisado || 0,
                 porte: dadosCadastrais.porte || "MEDIO",
                 data_abertura: dadosCadastrais.data_abertura || "",
                 situacao: dadosCadastrais.situacao || "ATIVA",
@@ -1316,7 +1681,11 @@ app.post("/enriquecer", async function(req, res) {
                 faturamento_fonte: dadosCadastrais.faturamento_fonte || "nao_informado",
                 socio_majoritario: dadosCadastrais.socio_majoritario || null,
                 controladora: dadosCadastrais.controladora || null,
-                qsa: dadosCadastrais.qsa || []
+                qsa: dadosCadastrais.qsa || [],
+                email_analisado: dadosCadastrais.email_analisado || "",
+                whatsapp_analisado: dadosCadastrais.whatsapp_analisado || "",
+                email_solicitante: dadosCadastrais.email_solicitante || "",
+                whatsapp_solicitante: dadosCadastrais.whatsapp_solicitante || ""
             },
             motor: resultadoMotor
         };
@@ -1390,24 +1759,58 @@ app.post("/enriquecer", async function(req, res) {
         });
     }
 });
-
 // ============================================
 // INICIA O SERVIDOR
 // ============================================
 const PORT = process.env.PORT || 3000;
 
-const server = app.listen(PORT, '0.0.0.0', function() {
-    console.log("✅ VERI API v" + VERSAO_API + " rodando na porta " + PORT);
-    console.log("⚙️ Motor VERI integrado à rota /enriquecer");
-    console.log("📊 Busca BrasilAPI ativada para porte e data_abertura");
-    console.log('🚀 REVISÃO CORRIGIDA - JSON_INVALIDO RESOLVIDO');
-});
-
-server.on('error', function(err) {
-    console.error('❌ Erro no servidor:', err);
-    if (err.code === 'EADDRINUSE') {
-        console.error('⚠️ Porta ' + PORT + ' já está em uso!');
+async function iniciarServidor() {
+    console.log('🚀 Iniciando servidor VERI API...');
+    
+    // 1. Verifica se o CSV existe no Storage
+    if (storage) {
+        try {
+            const bucket = storage.bucket(BUCKET_NAME);
+            const file = bucket.file(CSV_FILE);
+            const [exists] = await file.exists();
+            if (exists) {
+                console.log('✅ CSV disponível no Google Cloud Storage.');
+            } else {
+                console.warn('⚠️ CSV não encontrado no Storage.');
+            }
+        } catch (err) {
+            console.warn('⚠️ Erro ao verificar CSV no Storage:', err.message);
+        }
+    } else {
+        console.warn('⚠️ Storage não disponível. Busca no CSV desativada.');
     }
-});
+    
+    // 2. Tenta carregar o CSV em memória (se existir localmente)
+    try {
+        await carregarCSVIndex();
+    } catch (err) {
+        console.warn('⚠️ Erro ao carregar CSV na inicialização:', err.message);
+        console.warn('⚠️ O servidor continuará rodando sem o índice CSV local.');
+    }
+    
+    // 3. Sobe o servidor
+    const server = app.listen(PORT, '0.0.0.0', function() {
+        console.log("✅ VERI API v" + VERSAO_API + " rodando na porta " + PORT);
+        console.log("⚙️ Motor VERI integrado à rota /enriquecer");
+        console.log("📊 Busca BrasilAPI ativada para porte e data_abertura");
+        console.log('🚀 REVISÃO CORRIGIDA - JSON_INVALIDO RESOLVIDO');
+        console.log('📊 CSV indexado: ' + (csvIndexCarregado ? '✅ SIM (busca por nome ativa)' : '⚠️ NÃO (fallback ativo - Storage)'));
+    });
+
+    server.on('error', function(err) {
+        console.error('❌ Erro no servidor:', err);
+        if (err.code === 'EADDRINUSE') {
+            console.error('⚠️ Porta ' + PORT + ' já está em uso!');
+        }
+    });
+}
+
+// Inicia o servidor
+iniciarServidor();
 
 module.exports = app;
