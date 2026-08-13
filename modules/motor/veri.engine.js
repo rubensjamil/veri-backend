@@ -15,6 +15,9 @@
 // CORRIGIDO: Recomendação considera IMPACTO + PROBABILIDADE (dias > 15 = PARE)
 // CORRIGIDO: Ajuste de riscos críticos (percentual = 99% - soma dos outros 3)
 // 🔧 CORRIGIDO: dias_comprometimento agora considera valor da parcela se for parcelado
+// 🔧 CORRIGIDO: Nova escala de impacto (Muito Baixo, Baixo, Moderado, Alto, Muito Alto)
+// 🔧 CORRIGIDO: Fallback IBGE para PF (R$ 3.367,00/mês)
+// 🔧 CORRIGIDO: Terminologia "dias de trabalho" para PF e "dias de faturamento" para PJ
 // ============================================================
 
 const config = require('../../motor.config.js');
@@ -110,7 +113,7 @@ function calcularFinanceiro(dados) {
             fonte = 'faturamento_solicitante';
         } else if (solicitante.tipo === 'empresa') {
             var porteNormalizado = normalizarPorte(solicitante.porte) || solicitante.porte || 'MEDIO';
-            ticketUsado = calcularTicketDiario(porteNormalizado);
+            ticketUsado = calcularTicketDiarioPorPorte(porteNormalizado);
             fonte = 'porte_solicitante';
         } else {
             ticketUsado = relacionamento.ticket_medio || 5000;
@@ -129,7 +132,7 @@ function calcularFinanceiro(dados) {
                 fonte = 'faturamento_real_analisado';
             } else {
                 var porteNormalizado = normalizarPorte(analisado.porte) || analisado.porte || 'MEDIO';
-                ticketUsado = calcularTicketDiario(porteNormalizado);
+                ticketUsado = calcularTicketDiarioPorPorte(porteNormalizado);
                 fonte = 'porte_analisado';
             }
         } else {
@@ -138,7 +141,7 @@ function calcularFinanceiro(dados) {
         }
     } else {
         var porteNormalizado = normalizarPorte(analisado.porte) || analisado.porte || 'MEDIO';
-        ticketUsado = calcularTicketDiario(porteNormalizado);
+        ticketUsado = calcularTicketDiarioPorPorte(porteNormalizado);
         fonte = 'porte_analisado_fallback';
     }
 
@@ -325,10 +328,10 @@ function calcularRelacional(dados) {
 }
 
 // ============================================
-// FUNÇÕES AUXILIARES
+// FUNÇÕES AUXILIARES (CORRIGIDAS)
 // ============================================
 
-function calcularTicketDiario(porte) {
+function calcularTicketDiarioPorPorte(porte) {
     var faturamentoAnual = obterFaturamentoAnual(porte);
     return faturamentoAnual ? Math.round(faturamentoAnual / 12 / 30) : 0;
 }
@@ -346,21 +349,57 @@ function getNivelRisco(contrib) {
     return 'BAIXO';
 }
 
+// 🔧 NOVA ESCALA DE IMPACTO
 function getNivelImpacto(dias) {
+    if (dias <= 0.3) return { nivel: 'Muito Baixo', cor: '🟢' };
     if (dias <= 3) return { nivel: 'Baixo', cor: '🟢' };
     if (dias <= 7) return { nivel: 'Moderado', cor: '🟡' };
     if (dias <= 15) return { nivel: 'Alto', cor: '🟠' };
-    return { nivel: 'Crítico', cor: '🔴' };
+    return { nivel: 'Muito Alto', cor: '🔴' };
+}
+
+// 🔧 FUNÇÃO PARA CALCULAR TICKET DIÁRIO COM FALLBACK IBGE PARA PF
+function calcularTicketDiario(parte) {
+    if (!parte || !parte.tipo) return 0;
+    if (parte.tipo === 'pessoa_fisica' || parte.tipo === 'pessoa') {
+        var renda = (parte.renda && parte.renda > 0) ? parte.renda : 3367; // IBGE 2025
+        return renda / 30;
+    }
+    if (parte.tipo === 'empresa' || parte.tipo === 'pessoa_juridica') {
+        var faturamentoMensal = 0;
+        if (parte.faturamento_anual) {
+            faturamentoMensal = parte.faturamento_anual / 12;
+        } else if (parte.porte && parte.porte !== 'N/A') {
+            faturamentoMensal = calcularFaturamentoMensalPorPorte(parte.porte);
+        }
+        return faturamentoMensal / 30;
+    }
+    return 0;
+}
+
+function calcularFaturamentoMensalPorPorte(porte) {
+    var faturamentoAnual = obterFaturamentoAnual(porte);
+    return faturamentoAnual ? faturamentoAnual / 12 : 0;
+}
+
+// 🔧 FUNÇÃO PARA CALCULAR IMPACTO EM DIAS
+function calcularImpacto(valorEfetivo, parte) {
+    var ticketDiario = calcularTicketDiario(parte);
+    if (ticketDiario > 0 && valorEfetivo > 0) {
+        var dias = Math.round((valorEfetivo / ticketDiario) * 10) / 10;
+        return {
+            dias: dias,
+            ticket: ticketDiario,
+            nivel: getNivelImpacto(dias)
+        };
+    }
+    return { dias: 0, ticket: 0, nivel: { nivel: 'Não calculado', cor: '⚪' } };
 }
 
 // ============================================================
-// 🔧 NOVA FUNÇÃO: AJUSTAR RISCOS CRÍTICOS
+// 🔧 AJUSTE DE RISCOS CRÍTICOS
 // ============================================================
 function ajustarRiscosCriticos(topRiscos) {
-    // topRiscos é um array com os 4 maiores riscos
-    // Cada item tem { risco, pontuacao, contribuicao, nivel }
-    
-    // 1. Verifica se algum dos 4 é CRITICO
     var temCritico = false;
     var indiceCritico = -1;
     for (var i = 0; i < topRiscos.length; i++) {
@@ -371,10 +410,8 @@ function ajustarRiscosCriticos(topRiscos) {
         }
     }
     
-    // Se não tiver crítico, retorna os riscos originais
     if (!temCritico) return topRiscos;
     
-    // 2. Pega os outros 3 riscos (excluindo o crítico)
     var outrosRiscos = [];
     for (var j = 0; j < topRiscos.length; j++) {
         if (j !== indiceCritico) {
@@ -382,19 +419,14 @@ function ajustarRiscosCriticos(topRiscos) {
         }
     }
     
-    // 3. Soma as contribuições dos outros 3
     var somaOutros = 0;
     for (var k = 0; k < outrosRiscos.length; k++) {
         somaOutros += outrosRiscos[k].contribuicao;
     }
     
-    // 4. Calcula o novo percentual do risco crítico
     var novoPercentual = 99 - somaOutros;
-    
-    // 5. Garante que o crítico não fique abaixo de 50% (para manter o peso)
     if (novoPercentual < 50) novoPercentual = 50;
     
-    // 6. Atualiza a contribuição do risco crítico
     topRiscos[indiceCritico].contribuicao = Math.round(novoPercentual * 10) / 10;
     topRiscos[indiceCritico].nivel = 'CRITICO';
     
@@ -490,7 +522,7 @@ function calcularRiscos(dados) {
     var relacionalResult = calcularRelacional(dados);
 
     // ============================================================
-    // PERCENTUAL DE COMPROMETIMENTO - Quem assume o compromisso?
+    // PERCENTUAL DE COMPROMETIMENTO E DIAS (COM VALOR DA PARCELA)
     // ============================================================
     var percentualComprometimento = 0;
     var valorNegocio = dados.negocio.valor || 0;
@@ -504,47 +536,48 @@ function calcularRiscos(dados) {
     var isCompra = negocioStr.startsWith('comprar') || negocioStr.startsWith('contratar');
     var isVenda = negocioStr.startsWith('vender');
 
+    // Ticket diário para cálculo do percentual de comprometimento (quem assume o compromisso)
     var ticketDiario = 0;
-
     if (isCompra) {
-        if (dados.solicitante.tipo === 'pessoa' && dados.solicitante.renda && dados.solicitante.renda > 0) {
-            ticketDiario = dados.solicitante.renda / 30;
-        } else if (dados.solicitante.tipo === 'empresa' && dados.solicitante.faturamento_anual && dados.solicitante.faturamento_anual > 0) {
-            ticketDiario = dados.solicitante.faturamento_anual / 12 / 30;
-        } else if (dados.solicitante.tipo === 'empresa') {
-            var porteNormalizado = normalizarPorte(dados.solicitante.porte) || dados.solicitante.porte || 'MEDIO';
-            var faturamentoAnual = obterFaturamentoAnual(porteNormalizado);
-            ticketDiario = faturamentoAnual / 12 / 30;
-        } else {
-            ticketDiario = financeiroResult.ticket_estimado || 1000;
-        }
+        // Compra: solicitante paga
+        var parteSolicitante = {
+            tipo: dados.solicitante.tipo || 'empresa',
+            renda: dados.solicitante.renda || 0,
+            porte: dados.solicitante.porte || 'MEDIO',
+            faturamento_anual: dados.solicitante.faturamento_anual || null
+        };
+        ticketDiario = calcularTicketDiario(parteSolicitante);
     } else if (isVenda) {
-        if (dados.analisado.tipo === 'pessoa' && dados.analisado.renda && dados.analisado.renda > 0) {
-            ticketDiario = dados.analisado.renda / 30;
-        } else if (dados.analisado.tipo === 'empresa' && dados.analisado.faturamento_anual && dados.analisado.faturamento_anual > 0) {
-            ticketDiario = dados.analisado.faturamento_anual / 12 / 30;
-        } else if (dados.analisado.tipo === 'empresa') {
-            var porteNormalizado = normalizarPorte(dados.analisado.porte) || dados.analisado.porte || 'MEDIO';
-            var faturamentoAnual = obterFaturamentoAnual(porteNormalizado);
-            ticketDiario = faturamentoAnual / 12 / 30;
-        } else {
-            ticketDiario = financeiroResult.ticket_estimado || 1000;
-        }
+        // Venda: analisado paga
+        var parteAnalisado = {
+            tipo: dados.analisado.tipo || 'empresa',
+            renda: dados.analisado.renda || 0,
+            porte: dados.analisado.porte || 'MEDIO',
+            faturamento_anual: dados.analisado.faturamento_anual || null
+        };
+        ticketDiario = calcularTicketDiario(parteAnalisado);
     } else {
-        ticketDiario = financeiroResult.ticket_estimado || 1000;
+        // Fallback: usa analisado
+        var parteAnalisadoFallback = {
+            tipo: dados.analisado.tipo || 'empresa',
+            renda: dados.analisado.renda || 0,
+            porte: dados.analisado.porte || 'MEDIO',
+            faturamento_anual: dados.analisado.faturamento_anual || null
+        };
+        ticketDiario = calcularTicketDiario(parteAnalisadoFallback);
     }
 
     if (ticketDiario > 0 && valorParcela > 0) {
         percentualComprometimento = Math.round((valorParcela / ticketDiario) * 100);
     }
 
-    // 🔧 CORREÇÃO: dias_comprometimento considera valor da parcela se for parcelado
-    var diasComprometimento = 0;
+    // 🔧 DIAS COMPROMETIMENTO: usa valor da parcela se for parcelado
     var pagamento = dados.negocio.tipo_pagamento || 'avista';
     var valorBaseParaImpacto = (pagamento === 'aprazo' || pagamento === 'a prazo') && parcelas > 1
         ? valorParcela
         : valorNegocio;
 
+    var diasComprometimento = 0;
     if (ticketDiario > 0 && valorBaseParaImpacto > 0) {
         diasComprometimento = Math.round((valorBaseParaImpacto / ticketDiario) * 10) / 10;
     }
@@ -591,11 +624,10 @@ function calcularRiscos(dados) {
     }
 
     // ============================================================
-    // 🔧 RECOMENDAÇÃO considerando IMPACTO + PROBABILIDADE + RISCOS CRÍTICOS
+    // RECOMENDAÇÃO considerando IMPACTO + PROBABILIDADE + RISCOS CRÍTICOS
     // ============================================================
     var recomendacao = 'SIGA';
 
-    // 1. Verifica se algum risco é CRÍTICO (força PARE)
     var temRiscoCritico = false;
     for (var i = 0; i < riscos.length; i++) {
         if (riscos[i].nivel === 'CRITICO') {
@@ -608,7 +640,6 @@ function calcularRiscos(dados) {
         console.log('⚠️ RISCO CRÍTICO detectado: forçando PARE');
     }
 
-    // 2. Verifica o score (probabilidade)
     if (!temRiscoCritico) {
         if (scoreGlobal > 65) {
             recomendacao = 'PARE';
@@ -617,7 +648,6 @@ function calcularRiscos(dados) {
         }
     }
 
-    // 3. Se o impacto for CRÍTICO (dias > 15), força PARE
     if (diasComprometimento > 15) {
         recomendacao = 'PARE';
         console.log('⚠️ IMPACTO CRÍTICO (' + diasComprometimento + ' dias): forçando PARE');
@@ -668,7 +698,7 @@ function calcularRiscos(dados) {
     }
 
     // ============================================================
-    // 🔧 APLICA AJUSTE DE RISCOS CRÍTICOS
+    // APLICA AJUSTE DE RISCOS CRÍTICOS
     // ============================================================
     topRiscos = ajustarRiscosCriticos(topRiscos);
 
@@ -712,6 +742,9 @@ module.exports = {
     calcularIntegridade,
     calcularDeterioracao,
     calcularRelacional,
+    calcularTicketDiarioPorPorte,
+    getNivelRisco,
+    getNivelImpacto,
     calcularTicketDiario,
-    getNivelRisco
+    calcularImpacto
 };
