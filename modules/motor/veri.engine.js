@@ -14,10 +14,11 @@
 // CORRIGIDO: Nomes por extenso da BrasilAPI (MICRO EMPRESA, etc.) mapeados para MEI/ME
 // CORRIGIDO: Recomendação considera IMPACTO + PROBABILIDADE (dias > 15 = PARE)
 // CORRIGIDO: Ajuste de riscos críticos (percentual = 99% - soma dos outros 3)
-// 🔧 CORRIGIDO: dias_comprometimento agora considera valor da parcela se for parcelado
-// 🔧 CORRIGIDO: Nova escala de impacto (Muito Baixo, Baixo, Moderado, Alto, Muito Alto)
-// 🔧 CORRIGIDO: Fallback IBGE para PF (R$ 3.367,00/mês)
-// 🔧 CORRIGIDO: Terminologia "dias de trabalho" para PF e "dias de faturamento" para PJ
+// CORRIGIDO: dias_comprometimento agora considera valor da parcela se for parcelado
+// CORRIGIDO: Nova escala de impacto (Muito Baixo, Baixo, Moderado, Alto, Muito Alto)
+// CORRIGIDO: Fallback IBGE para PF (R$ 3.367,00/mês)
+// CORRIGIDO: Terminologia "dias de trabalho" para PF e "dias de faturamento" para PJ
+// CORRIGIDO: Tabela de faturamento diário corrigida (MEI=225, ME=1000, EPP=13333, MEDIO=33333, GRANDE=138889)
 // ============================================================
 
 const config = require('../../motor.config.js');
@@ -61,7 +62,7 @@ function normalizarPorte(porte) {
 }
 
 // ============================================
-// FUNÇÃO: Obter faturamento anual por porte
+// FUNÇÃO: Obter faturamento anual por porte (CORRIGIDA)
 // ============================================
 function obterFaturamentoAnual(porte) {
     var porteNormalizado = normalizarPorte(porte) || porte;
@@ -571,7 +572,7 @@ function calcularRiscos(dados) {
         percentualComprometimento = Math.round((valorParcela / ticketDiario) * 100);
     }
 
-    // 🔧 DIAS COMPROMETIMENTO: usa valor da parcela se for parcelado
+    // DIAS COMPROMETIMENTO: usa valor da parcela se for parcelado
     var pagamento = dados.negocio.tipo_pagamento || 'avista';
     var valorBaseParaImpacto = (pagamento === 'aprazo' || pagamento === 'a prazo') && parcelas > 1
         ? valorParcela
@@ -746,5 +747,6 @@ module.exports = {
     getNivelRisco,
     getNivelImpacto,
     calcularTicketDiario,
-    calcularImpacto
+    calcularImpacto,
+    obterFaturamentoAnual
 };
