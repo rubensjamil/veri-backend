@@ -13,10 +13,9 @@ const { HarmCategory, HarmBlockThreshold } = require("@google/generative-ai");
 const axios = require('axios');
 
 const MODELOS_GEMINI = [
-    'gemini-2.0-flash',        // ← Principal (disponível)
-    'gemini-2.0-flash-lite'    // ← Fallback (disponível)
-    // NÃO USAR: gemini-2.5-flash, gemini-2.5-flash-lite (indisponíveis)
-    // NÃO USAR: gemini-3.5-flash, gemini-2.5-pro (muito caros)
+    'gemini-3-flash-preview',  // Principal (disponível)
+    'gemini-1.5-flash',        // Fallback (se disponível)
+    'gemini-1.5-pro'           // Fallback 2 (se disponível)
 ];
 
 const VERSAO_PROMPT = 'v11';
