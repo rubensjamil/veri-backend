@@ -1192,7 +1192,7 @@ app.post("/enriquecer", async function(req, res) {
         var valorNegocio = 0;
         var parcelasNegocio = 1;
         var tipoPagamento = "avista";
-        var tipoNegocio = "";
+        tipoNegocio = "";
 
         if (req.body.valor_contratacao) {
             valorNegocio = parseFloat(req.body.valor_contratacao) || 0;
