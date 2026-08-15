@@ -15,10 +15,10 @@
 // CORRIGIDO: Recomendação considera IMPACTO + PROBABILIDADE (dias > 15 = PARE)
 // CORRIGIDO: Ajuste de riscos críticos (percentual = 99% - soma dos outros 3)
 // CORRIGIDO: dias_comprometimento agora considera valor da parcela se for parcelado
-// CORRIGIDO: Nova escala de impacto (Muito Baixo, Baixo, Moderado, Alto, Muito Alto)
-// CORRIGIDO: Fallback IBGE para PF (R$ 3.367,00/mês)
-// CORRIGIDO: Terminologia "dias de trabalho" para PF e "dias de faturamento" para PJ
-// CORRIGIDO: Tabela de faturamento diário corrigida (MEI=225, ME=1000, EPP=13333, MEDIO=33333, GRANDE=138889)
+// 🔧 CORRIGIDO: Nova escala de impacto (até 1, 1-5, 5-10, 10-15, 15-20, >20)
+// 🔧 CORRIGIDO: Cálculo de impacto para cada parte usa seu próprio ticket diário
+// 🔧 CORRIGIDO: Peso extra por preocupação (P01-P07)
+// 🔧 CORRIGIDO: Normalização dos cards de risco proporcional à AMEAÇA
 // ============================================================
 
 const config = require('../../motor.config.js');
@@ -62,7 +62,7 @@ function normalizarPorte(porte) {
 }
 
 // ============================================
-// FUNÇÃO: Obter faturamento anual por porte (CORRIGIDA)
+// FUNÇÃO: Obter faturamento anual por porte
 // ============================================
 function obterFaturamentoAnual(porte) {
     var porteNormalizado = normalizarPorte(porte) || porte;
@@ -350,13 +350,14 @@ function getNivelRisco(contrib) {
     return 'BAIXO';
 }
 
-// 🔧 NOVA ESCALA DE IMPACTO
+// 🔧 NOVA ESCALA DE IMPACTO (até 1, 1-5, 5-10, 10-15, 15-20, >20)
 function getNivelImpacto(dias) {
-    if (dias <= 0.3) return { nivel: 'Muito Baixo', cor: '🟢' };
-    if (dias <= 3) return { nivel: 'Baixo', cor: '🟢' };
-    if (dias <= 7) return { nivel: 'Moderado', cor: '🟡' };
+    if (dias <= 1) return { nivel: 'Muito Baixo', cor: '🟢' };
+    if (dias <= 5) return { nivel: 'Baixo', cor: '🟢' };
+    if (dias <= 10) return { nivel: 'Moderado', cor: '🟡' };
     if (dias <= 15) return { nivel: 'Alto', cor: '🟠' };
-    return { nivel: 'Muito Alto', cor: '🔴' };
+    if (dias <= 20) return { nivel: 'Muito Alto', cor: '🔴' };
+    return { nivel: 'Crítico', cor: '🔴🔴' };
 }
 
 // 🔧 FUNÇÃO PARA CALCULAR TICKET DIÁRIO COM FALLBACK IBGE PARA PF
@@ -383,7 +384,7 @@ function calcularFaturamentoMensalPorPorte(porte) {
     return faturamentoAnual ? faturamentoAnual / 12 : 0;
 }
 
-// 🔧 FUNÇÃO PARA CALCULAR IMPACTO EM DIAS
+// 🔧 FUNÇÃO PARA CALCULAR IMPACTO EM DIAS (CADA PARTE USA SEU PRÓPRIO TICKET)
 function calcularImpacto(valorEfetivo, parte) {
     var ticketDiario = calcularTicketDiario(parte);
     if (ticketDiario > 0 && valorEfetivo > 0) {
@@ -436,7 +437,7 @@ function ajustarRiscosCriticos(topRiscos) {
     return topRiscos;
 }
 // ============================================
-// FUNÇÃO PRINCIPAL: calcularRiscos
+// FUNÇÃO PRINCIPAL: calcularRiscos (CORRIGIDA)
 // ============================================
 
 function calcularRiscos(dados) {
@@ -501,11 +502,12 @@ function calcularRiscos(dados) {
             ticket_estimado: 0,
             tempo_mercado_anos: 0,
             porte_solicitante: (dados.solicitante && dados.solicitante.porte) || 'MEDIO',
-            porte_analisado: (dados.analisado && dados.analisado.porte) || '',
+            porte_analisado
+porte_analisado: (dados.analisado && dados.analisado.porte) || '',
             metodologia: config.METODOLOGIA_VERSAO,
             percentual_comprometimento: 0,
             dias_comprometimento: 0,
-            nivel_impacto: { nivel: 'Crítico', cor: '🔴' },
+            nivel_impacto: { nivel: 'Crítico', cor: '🔴🔴' },
             alerta: {
                 tipo: 'SITUACAO_CRITICA',
                 mensagem: 'A empresa está com situação "' + situacaoRaw + '". Negócios com essa situação são considerados inviáveis.',
@@ -523,6 +525,29 @@ function calcularRiscos(dados) {
     var relacionalResult = calcularRelacional(dados);
 
     // ============================================================
+    // EXTRAI PREOCUPAÇÃO PARA AJUSTAR PESOS
+    // ============================================================
+    var preocupacao = dados.preocupacao || null;
+    var pesoFinanceiroExtra = 0;
+    var pesoRelacionalExtra = 0;
+    var pesoContratualExtra = 0;
+    var pesoReputacionalExtra = 0;
+
+    if (preocupacao === 'P01' || preocupacao === 'P02') {
+        pesoFinanceiroExtra = 0.3;
+    } else if (preocupacao === 'P03') {
+        pesoRelacionalExtra = 0.2;
+        pesoContratualExtra = 0.3;
+    } else if (preocupacao === 'P04') {
+        pesoFinanceiroExtra = 0.2;
+        pesoReputacionalExtra = 0.2;
+    } else if (preocupacao === 'P05') {
+        pesoRelacionalExtra = 0.15;
+    } else if (preocupacao === 'P06') {
+        pesoRelacionalExtra = 0.15;
+    }
+
+    // ============================================================
     // PERCENTUAL DE COMPROMETIMENTO E DIAS (COM VALOR DA PARCELA)
     // ============================================================
     var percentualComprometimento = 0;
@@ -537,8 +562,8 @@ function calcularRiscos(dados) {
     var isCompra = negocioStr.startsWith('comprar') || negocioStr.startsWith('contratar');
     var isVenda = negocioStr.startsWith('vender');
 
-    // Ticket diário para cálculo do percentual de comprometimento (quem assume o compromisso)
-    var ticketDiario = 0;
+    // 🔧 Ticket diário para o percentual de comprometimento (quem assume o compromisso)
+    var ticketDiarioPercentual = 0;
     if (isCompra) {
         // Compra: solicitante paga
         var parteSolicitante = {
@@ -547,7 +572,7 @@ function calcularRiscos(dados) {
             porte: dados.solicitante.porte || 'MEDIO',
             faturamento_anual: dados.solicitante.faturamento_anual || null
         };
-        ticketDiario = calcularTicketDiario(parteSolicitante);
+        ticketDiarioPercentual = calcularTicketDiario(parteSolicitante);
     } else if (isVenda) {
         // Venda: analisado paga
         var parteAnalisado = {
@@ -556,7 +581,7 @@ function calcularRiscos(dados) {
             porte: dados.analisado.porte || 'MEDIO',
             faturamento_anual: dados.analisado.faturamento_anual || null
         };
-        ticketDiario = calcularTicketDiario(parteAnalisado);
+        ticketDiarioPercentual = calcularTicketDiario(parteAnalisado);
     } else {
         // Fallback: usa analisado
         var parteAnalisadoFallback = {
@@ -565,44 +590,60 @@ function calcularRiscos(dados) {
             porte: dados.analisado.porte || 'MEDIO',
             faturamento_anual: dados.analisado.faturamento_anual || null
         };
-        ticketDiario = calcularTicketDiario(parteAnalisadoFallback);
+        ticketDiarioPercentual = calcularTicketDiario(parteAnalisadoFallback);
     }
 
-    if (ticketDiario > 0 && valorParcela > 0) {
-        percentualComprometimento = Math.round((valorParcela / ticketDiario) * 100);
+    if (ticketDiarioPercentual > 0 && valorParcela > 0) {
+        percentualComprometimento = Math.round((valorParcela / ticketDiarioPercentual) * 100);
     }
 
-    // DIAS COMPROMETIMENTO: usa valor da parcela se for parcelado
+    // 🔧 DIAS COMPROMETIMENTO: cada parte usa seu próprio ticket
     var pagamento = dados.negocio.tipo_pagamento || 'avista';
     var valorBaseParaImpacto = (pagamento === 'aprazo' || pagamento === 'a prazo') && parcelas > 1
         ? valorParcela
         : valorNegocio;
 
-    var diasComprometimento = 0;
-    if (ticketDiario > 0 && valorBaseParaImpacto > 0) {
-        diasComprometimento = Math.round((valorBaseParaImpacto / ticketDiario) * 10) / 10;
-    }
+    // 🔧 Impacto para o analisado (usa ticket do analisado)
+    var parteAnalisadoImpacto = {
+        tipo: dados.analisado.tipo || 'empresa',
+        renda: dados.analisado.renda || 0,
+        porte: dados.analisado.porte || 'MEDIO',
+        faturamento_anual: dados.analisado.faturamento_anual || null
+    };
+    var impactoAnalisado = calcularImpacto(valorBaseParaImpacto, parteAnalisadoImpacto);
 
-    var nivelImpacto = getNivelImpacto(diasComprometimento);
+    // 🔧 Impacto para o solicitante (usa ticket do solicitante)
+    var parteSolicitanteImpacto = {
+        tipo: dados.solicitante.tipo || 'empresa',
+        renda: dados.solicitante.renda || 0,
+        porte: dados.solicitante.porte || 'MEDIO',
+        faturamento_anual: dados.solicitante.faturamento_anual || null
+    };
+    var impactoASolicitante = calcularImpacto(valorBaseParaImpacto, parteSolicitanteImpacto);
 
-    console.log('🧮 PERCENTUAL: valorParcela:', valorParcela, 'ticketDiario:', ticketDiario, 'percentual:', percentualComprometimento);
-    console.log('📆 DIAS COMPROMETIMENTO (base:', valorBaseParaImpacto, '):', diasComprometimento, 'NÍVEL:', nivelImpacto.nivel);
+    // 🔧 Para compatibilidade com o frontend, usamos o impacto do analisado como principal (já que a venda é o cenário mais comum)
+    var diasComprometimento = impactoAnalisado.dias;
+    var nivelImpacto = impactoAnalisado.nivel;
+
+    console.log('🧮 PERCENTUAL: valorParcela:', valorParcela, 'ticketDiarioPercentual:', ticketDiarioPercentual, 'percentual:', percentualComprometimento);
+    console.log('📆 DIAS COMPROMETIMENTO (analisado):', impactoAnalisado.dias, 'NÍVEL:', impactoAnalisado.nivel.nivel);
+    console.log('📆 DIAS COMPROMETIMENTO (solicitante):', impactoASolicitante.dias, 'NÍVEL:', impactoASolicitante.nivel.nivel);
 
     var resolutividade = config.DEFAULTS.RESOLUTIVIDADE;
     var contratual = 0;
     var reputacional = config.DEFAULTS.REPUTACIONAL;
 
     var fatores = [
-        { nome: 'FINANCEIRO', pontuacao: financeiroResult.pontuacao, peso: metodologia.PESOS.FINANCEIRO },
+        { nome: 'FINANCEIRO', pontuacao: financeiroResult.pontuacao, peso: metodologia.PESOS.FINANCEIRO + pesoFinanceiroExtra },
         { nome: 'RESOLUTIVIDADE', pontuacao: resolutividade, peso: metodologia.PESOS.RESOLUTIVIDADE },
         { nome: 'DESCONTINUIDADE', pontuacao: descontinuidadeResult.pontuacao, peso: metodologia.PESOS.DESCONTINUIDADE },
         { nome: 'VERACIDADE', pontuacao: veracidadeResult.pontuacao, peso: metodologia.PESOS.VERACIDADE },
         { nome: 'COMPORTAMENTAL', pontuacao: comportamentalResult.pontuacao, peso: metodologia.PESOS.COMPORTAMENTAL },
         { nome: 'INTEGRIDADE', pontuacao: integridadeResult.pontuacao, peso: metodologia.PESOS.INTEGRIDADE },
         { nome: 'DETERIORACAO', pontuacao: deterioracaoResult.pontuacao, peso: metodologia.PESOS.DETERIORACAO },
-        { nome: 'CONTRATUAL', pontuacao: contratual, peso: metodologia.PESOS.CONTRATUAL },
-        { nome: 'REPUTACIONAL', pontuacao: reputacional, peso: metodologia.PESOS.REPUTACIONAL },
-        { nome: 'RISCO ENTRE AS PARTES', pontuacao: relacionalResult.pontuacao, peso: metodologia.PESOS.RELACIONAL }
+        { nome: 'CONTRATUAL', pontuacao: contratual, peso: metodologia.PESOS.CONTRATUAL + pesoContratualExtra },
+        { nome: 'REPUTACIONAL', pontuacao: reputacional, peso: metodologia.PESOS.REPUTACIONAL + pesoReputacionalExtra },
+        { nome: 'RISCO ENTRE AS PARTES', pontuacao: relacionalResult.pontuacao, peso: metodologia.PESOS.RELACIONAL + pesoRelacionalExtra }
     ];
 
     var totalPonderado = 0;
@@ -622,6 +663,23 @@ function calcularRiscos(dados) {
             contribuicao: contribuicao,
             nivel: getNivelRisco(contribuicao)
         });
+    }
+
+    // ============================================================
+    // 🔧 NORMALIZAÇÃO DOS CARDS DE RISCO (PROPORCIONAL À AMEAÇA)
+    // ============================================================
+    var ameaca = scoreGlobal;
+    var somaCards = 0;
+    for (var i = 0; i < riscos.length; i++) {
+        somaCards += riscos[i].contribuicao;
+    }
+    if (somaCards > 0 && ameaca > 0) {
+        var fatorNormalizacao = ameaca / somaCards;
+        for (var i = 0; i < riscos.length; i++) {
+            riscos[i].contribuicao = Math.round(riscos[i].contribuicao * fatorNormalizacao * 10) / 10;
+            // Recalcula o nível com base no novo valor
+            riscos[i].nivel = getNivelRisco(riscos[i].contribuicao);
+        }
     }
 
     // ============================================================
@@ -649,10 +707,10 @@ function calcularRiscos(dados) {
         }
     }
 
-    if (diasComprometimento > 15) {
+    if (diasComprometimento > 20) {
         recomendacao = 'PARE';
         console.log('⚠️ IMPACTO CRÍTICO (' + diasComprometimento + ' dias): forçando PARE');
-    } else if (diasComprometimento > 7 && recomendacao === 'SIGA') {
+    } else if (diasComprometimento > 10 && recomendacao === 'SIGA') {
         recomendacao = 'ATENCAO';
         console.log('⚠️ IMPACTO ALTO (' + diasComprometimento + ' dias): ajustando para ATENCAO');
     }
@@ -723,14 +781,25 @@ function calcularRiscos(dados) {
         riscos: riscos,
         top_riscos: topRiscos,
         tipo_analise: tipoAnalise,
-        ticket_estimado: ticketDiario || 0,
+        ticket_estimado: ticketDiarioPercentual || 0,
         tempo_mercado_anos: Math.round(descontinuidadeResult.tempo_mercado_anos * 10) / 10 || 0,
         porte_solicitante: relacionalResult.porte_solicitante || 'MEDIO',
         porte_analisado: relacionalResult.porte_analisado || '',
         metodologia: config.METODOLOGIA_VERSAO,
         percentual_comprometimento: percentualComprometimento,
         dias_comprometimento: diasComprometimento,
-        nivel_impacto: nivelImpacto
+        nivel_impacto: nivelImpacto,
+        // 🔧 NOVOS CAMPOS PARA O FRONTEND EXIBIR IMPACTO POR PARTE
+        impacto_analisado: {
+            dias: impactoAnalisado.dias,
+            ticket: impactoAnalisado.ticket,
+            nivel: impactoAnalisado.nivel
+        },
+        impacto_solicitante: {
+            dias: impactoASolicitante.dias,
+            ticket: impactoASolicitante.ticket,
+            nivel: impactoASolicitante.nivel
+        }
     };
 }
 

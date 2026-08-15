@@ -35,6 +35,8 @@
 // CORRIGIDO: Busca CNPJ no banco regional (cnpjs_famosos.json) antes da BrasilAPI
 // CORRIGIDO: Removida evidência de comprometimento do backend (frontend calcula)
 // CORRIGIDO: Fallback de faturamento com nomes por extenso (MICRO EMPRESA, etc.)
+// 🔧 CORRIGIDO: Retorna acao_protetiva no /enriquecer
+// 🔧 CORRIGIDO: Passa preocupacao para o motor
 // ============================================
 
 const express = require("express");
@@ -146,6 +148,12 @@ const { getCache, setCache } = require("./modules/evidence/cache");
 const { extrairScores } = require("./modules/motor/scores");
 const { calcularRiscos } = require("./modules/motor/veri.engine");
 const config = require("./motor.config");
+
+// ============================================
+// AÇÕES PROTETIVAS
+// ============================================
+const ACOES_PROTETIVAS = config.ACOES_PROTETIVAS || {};
+const ACAO_PADRAO = config.ACAO_PADRAO || 'Monitore de perto a execução do negócio.';
 
 const app = express();
 
@@ -1132,7 +1140,8 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
             risco_associado: "FINANCEIRO"
         });
     }
-// ============================================================
+
+    // ============================================================
     // EVIDÊNCIA DE DESCONTINUIDADE (mantida)
     // ============================================================
     var tempoMercado = 0;
@@ -1220,8 +1229,9 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
 
     return evidencias;
 }
+
 // ============================================================
-// ROTA /enriquecer – CORRIGIDA
+// ROTA /enriquecer – CORRIGIDA (COM AÇÃO PROTETIVA)
 // ============================================================
 app.post("/enriquecer", async function(req, res) {
     const inicio = Date.now();
@@ -1229,7 +1239,8 @@ app.post("/enriquecer", async function(req, res) {
         nome, cnpj, cpf, valor, porte, ticket_medio,
         email_analisado, whatsapp_analisado,
         email_solicitante, whatsapp_solicitante,
-        renda_solicitante, renda_analisado
+        renda_solicitante, renda_analisado,
+        preocupacoes, negocio, acao
     } = req.body;
 
     if (!nome && !cnpj && !cpf) {
@@ -1241,6 +1252,8 @@ app.post("/enriquecer", async function(req, res) {
     }
 
     const cnpjLimpo = normalizarCNPJ(cnpj);
+    const preocupacaoId = (preocupacoes && preocupacoes.length > 0) ? preocupacoes[0] : null;
+    const tipoNegocio = negocio ? negocio.split('_')[0] : 'analisar';
 
     try {
         // 1. CACHE
@@ -1272,7 +1285,7 @@ app.post("/enriquecer", async function(req, res) {
         }
 
         // ============================================================
-        // 🔧 CORREÇÃO: BUSCA NO BANCO REGIONAL (cnpjs_famosos.json)
+        // BUSCA NO BANCO REGIONAL E BRASILAPI (ORQUESTRADOR)
         // ============================================================
         var dadosBancoRegional = null;
         var faturamentoBancoRegional = null;
@@ -1289,9 +1302,6 @@ app.post("/enriquecer", async function(req, res) {
             }
         }
 
-        // ============================================================
-        // BUSCA NA BRASILAPI PARA OBTER PORTE E DATA_ABERTURA
-        // ============================================================
         var dadosCadastraisCompletos = {};
 
         if (cnpjLimpo && cnpjLimpo.length === 14) {
@@ -1322,7 +1332,6 @@ app.post("/enriquecer", async function(req, res) {
             }
         }
 
-        // 🔧 CORREÇÃO: Se encontrou no banco regional, usa o faturamento dele
         if (faturamentoBancoRegional) {
             dadosCadastraisCompletos.faturamento_anual = faturamentoBancoRegional;
             dadosCadastraisCompletos.setor = setorBancoRegional || dadosCadastraisCompletos.setor;
@@ -1330,17 +1339,10 @@ app.post("/enriquecer", async function(req, res) {
             console.log('✅ FATURAMENTO DO BANCO REGIONAL PRESERVADO:', faturamentoBancoRegional);
         }
 
-        // ============================================================
-        // ORQUESTRADOR - CORRIGIDO (com UF)
-        // ============================================================
         const modulo = req.body.modulo || "geral";
         const subModulo = req.body.subModulo || "geral";
 
-        // ============================================================
-        // EXTRAI UF DOS DADOS CADASTRAIS
-        // ============================================================
         var ufEmpresa = null;
-
         if (dadosCadastraisCompletos && dadosCadastraisCompletos.uf) {
             ufEmpresa = dadosCadastraisCompletos.uf;
         }
@@ -1378,7 +1380,7 @@ app.post("/enriquecer", async function(req, res) {
         }
 
         // ============================================================
-        // CHAMA ORQUESTRADOR COM A UF
+        // ORQUESTRADOR
         // ============================================================
         const dadosOrquestrador = await coletarEvidenciasReais(
             nome,
@@ -1389,7 +1391,6 @@ app.post("/enriquecer", async function(req, res) {
             subModulo
         );
 
-        // Combina os dados cadastrais (prioridade: o que veio da BrasilAPI)
         const dadosCadastrais = {
             ...dadosOrquestrador.dados_cadastrais,
             ...dadosCadastraisCompletos,
@@ -1412,41 +1413,32 @@ app.post("/enriquecer", async function(req, res) {
         };
 
         // ============================================================
-        // 🔧 CORREÇÃO: FATURAMENTO ANUAL – PRIORIDADE MÁXIMA DO BANCO REGIONAL
+        // FATURAMENTO ANUAL – PRIORIDADE MÁXIMA DO BANCO REGIONAL
         // ============================================================
         var faturamentoAnualEncontrado = null;
         var faturamentoFonte = "";
 
-        // 1. PRIORIDADE MÁXIMA: faturamento do banco regional (via dadosBancoRegional)
         if (faturamentoBancoRegional) {
             faturamentoAnualEncontrado = faturamentoBancoRegional;
             faturamentoFonte = "banco_regional_cnpj";
             console.log("✅ FATURAMENTO DO BANCO REGIONAL (por CNPJ):", faturamentoAnualEncontrado);
-        }
-        // 2. PRIORIDADE SEGUNDA: faturamento do banco regional (via orquestrador)
-        else if (dadosOrquestrador.faturamento_anual) {
+        } else if (dadosOrquestrador.faturamento_anual) {
             faturamentoAnualEncontrado = dadosOrquestrador.faturamento_anual;
             faturamentoFonte = "banco_regional_orquestrador";
             console.log("✅ FATURAMENTO DO BANCO REGIONAL (orquestrador):", faturamentoAnualEncontrado);
-        }
-        // 3. Se NÃO veio do banco, usa o que veio dos dados cadastrais (BrasilAPI/CSV)
-        else if (dadosCadastrais.faturamento_anual && dadosCadastrais.faturamento_anual > 0) {
+        } else if (dadosCadastrais.faturamento_anual && dadosCadastrais.faturamento_anual > 0) {
             faturamentoAnualEncontrado = dadosCadastrais.faturamento_anual;
             faturamentoFonte = "dados_cadastrais";
             console.log("✅ FATURAMENTO DOS DADOS CADASTRAIS:", faturamentoAnualEncontrado);
-        }
-        // 4. 🔧 CORREÇÃO: Fallback por porte (com suporte a nomes por extenso)
-        else {
+        } else {
             var porteEmpresa = dadosCadastrais.porte || "MEDIO";
             var faturamentoAnualPorPorte = {
-                // Siglas
                 "MEI": 81000,
                 "ME": 360000,
                 "EPP": 4800000,
                 "MEDIO": 12000000,
                 "GRANDE": 50000000,
                 "GIGANTE": 50000000,
-                // Nomes por extenso (fallback BrasilAPI)
                 "MICRO EMPRESA": 81000,
                 "MICROEMPRESA": 81000,
                 "EMPRESA INDIVIDUAL": 81000,
@@ -1462,9 +1454,7 @@ app.post("/enriquecer", async function(req, res) {
         dadosCadastrais.faturamento_anual = faturamentoAnualEncontrado;
         dadosCadastrais.faturamento_fonte = faturamentoFonte;
 
-        // 🔧 CORREÇÃO: PORTE - Garantir que empresas do banco regional sejam GIGANTE
         if (dadosBancoRegional || dadosOrquestrador.faturamento_anual) {
-            // Se veio do banco regional, o porte é GIGANTE
             dadosCadastrais.porte = 'GIGANTE';
             console.log("✅ PORTE FORÇADO PARA GIGANTE (banco regional)");
         } else if (dadosCadastrais.porte === 'DEMAIS') {
@@ -1473,7 +1463,7 @@ app.post("/enriquecer", async function(req, res) {
         }
 
         // ============================================================
-        // ADAPTADO: CAPTURA VALOR DO NEGÓCIO (Contratação/Compra/Venda)
+        // CAPTURA VALOR DO NEGÓCIO
         // ============================================================
         var valorNegocio = 0;
         var parcelasNegocio = 1;
@@ -1596,7 +1586,7 @@ app.post("/enriquecer", async function(req, res) {
         }
 
         // ============================================================
-        // PREPARA DADOS PARA O MOTOR COM FATURAMENTO_ANUAL (CORRIGIDO)
+        // PREPARA DADOS PARA O MOTOR COM PREOCUPAÇÃO
         // ============================================================
         const negocioStr = req.body.negocio ? String(req.body.negocio) : "";
 
@@ -1634,12 +1624,23 @@ app.post("/enriquecer", async function(req, res) {
                 parcelas: parcelasNegocio
             },
             porta_entrada: negocioStr.split("_")[0] || "empresa",
-            subsecao: negocioStr.split("_")[1] || "fornecedor"
+            subsecao: negocioStr.split("_")[1] || "fornecedor",
+            preocupacao: preocupacaoId
         };
 
         const resultadoMotor = calcularRiscos(dadosMotor);
 
+        // ============================================================
+        // AÇÃO PROTETIVA
+        // ============================================================
+        var acaoProtetiva = ACAO_PADRAO;
+        if (preocupacaoId && ACOES_PROTETIVAS[preocupacaoId]) {
+            acaoProtetiva = ACOES_PROTETIVAS[preocupacaoId][tipoNegocio] || ACOES_PROTETIVAS[preocupacaoId]['analisar'] || ACAO_PADRAO;
+        }
+
+        // ============================================================
         // 7. EVIDÊNCIAS – FALLBACK
+        // ============================================================
         var evidenciasGemini = [];
         if (estruturado && estruturado.dados_estruturados) {
             secoes.forEach(function(secao) {
@@ -1731,6 +1732,7 @@ app.post("/enriquecer", async function(req, res) {
             cpf_encontrado: dadosOrquestrador.cpf_encontrado || null,
             uf_encontrada: dadosCadastrais.uf || null,
             evidencias: evidenciasFinal,
+            acao_protetiva: acaoProtetiva,
             auditoria: {
                 hash: hashAuditoria,
                 hash_input: hashInput,
@@ -1751,7 +1753,9 @@ app.post("/enriquecer", async function(req, res) {
                 tempo_ms: Date.now() - inicio,
                 fonte: "orquestrador+gemini+motor",
                 gemini_retornou: geminiRetornouDados,
-                evidencias_fallback_usadas: (!geminiRetornouDados || evidenciasGemini.length === 0)
+                evidencias_fallback_usadas: (!geminiRetornouDados || evidenciasGemini.length === 0),
+                preocupacao: preocupacaoId,
+                tipo_negocio: tipoNegocio
             }
         };
 
@@ -1786,7 +1790,6 @@ const PORT = process.env.PORT || 3000;
 async function iniciarServidor() {
     console.log('🚀 Iniciando servidor VERI API...');
     
-    // 1. Verifica se o CSV existe no Storage
     if (storage) {
         try {
             const bucket = storage.bucket(BUCKET_NAME);
@@ -1804,7 +1807,6 @@ async function iniciarServidor() {
         console.warn('⚠️ Storage não disponível. Busca no CSV desativada.');
     }
     
-    // 2. Tenta carregar o CSV em memória (se existir localmente)
     try {
         await carregarCSVIndex();
     } catch (err) {
@@ -1812,7 +1814,6 @@ async function iniciarServidor() {
         console.warn('⚠️ O servidor continuará rodando sem o índice CSV local.');
     }
     
-    // 3. Sobe o servidor
     const server = app.listen(PORT, '0.0.0.0', function() {
         console.log("✅ VERI API v" + VERSAO_API + " rodando na porta " + PORT);
         console.log("⚙️ Motor VERI integrado à rota /enriquecer");
@@ -1829,7 +1830,6 @@ async function iniciarServidor() {
     });
 }
 
-// Inicia o servidor
 iniciarServidor();
 
 module.exports = app;
