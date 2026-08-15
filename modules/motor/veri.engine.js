@@ -12,13 +12,14 @@
 // CORRIGIDO: Adicionado dias_comprometimento no retorno
 // CORRIGIDO: Impacto financeiro SEMPRE com base em quem assume o compromisso
 // CORRIGIDO: Nomes por extenso da BrasilAPI (MICRO EMPRESA, etc.) mapeados para MEI/ME
-// CORRIGIDO: Recomendação considera IMPACTO + PROBABILIDADE (dias > 15 = PARE)
+// CORRIGIDO: Recomendação considera IMPACTO + PROBABILIDADE (dias > 20 = PARE)
 // CORRIGIDO: Ajuste de riscos críticos (percentual = 99% - soma dos outros 3)
 // CORRIGIDO: dias_comprometimento agora considera valor da parcela se for parcelado
 // 🔧 CORRIGIDO: Nova escala de impacto (até 1, 1-5, 5-10, 10-15, 15-20, >20)
 // 🔧 CORRIGIDO: Cálculo de impacto para cada parte usa seu próprio ticket diário
 // 🔧 CORRIGIDO: Peso extra por preocupação (P01-P07)
 // 🔧 CORRIGIDO: Normalização dos cards de risco proporcional à AMEAÇA
+// 🔧 CORRIGIDO: LIMITE DE EXPOSIÇÃO = 5 DIAS (não 3)
 // ============================================================
 
 const config = require('../../motor.config.js');
@@ -364,7 +365,7 @@ function getNivelImpacto(dias) {
 function calcularTicketDiario(parte) {
     if (!parte || !parte.tipo) return 0;
     if (parte.tipo === 'pessoa_fisica' || parte.tipo === 'pessoa') {
-        var renda = (parte.renda && parte.renda > 0) ? parte.renda : 3367; // IBGE 2025
+        var renda = (parte.renda && parte.renda > 0) ? parte.renda : 3367;
         return renda / 30;
     }
     if (parte.tipo === 'empresa' || parte.tipo === 'pessoa_juridica') {
@@ -502,8 +503,7 @@ function calcularRiscos(dados) {
             ticket_estimado: 0,
             tempo_mercado_anos: 0,
             porte_solicitante: (dados.solicitante && dados.solicitante.porte) || 'MEDIO',
-            porte_analisado
-porte_analisado: (dados.analisado && dados.analisado.porte) || '',
+            porte_analisado: (dados.analisado && dados.analisado.porte) || '',
             metodologia: config.METODOLOGIA_VERSAO,
             percentual_comprometimento: 0,
             dias_comprometimento: 0,
@@ -677,7 +677,6 @@ porte_analisado: (dados.analisado && dados.analisado.porte) || '',
         var fatorNormalizacao = ameaca / somaCards;
         for (var i = 0; i < riscos.length; i++) {
             riscos[i].contribuicao = Math.round(riscos[i].contribuicao * fatorNormalizacao * 10) / 10;
-            // Recalcula o nível com base no novo valor
             riscos[i].nivel = getNivelRisco(riscos[i].contribuicao);
         }
     }

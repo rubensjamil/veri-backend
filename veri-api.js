@@ -37,6 +37,7 @@
 // CORRIGIDO: Fallback de faturamento com nomes por extenso (MICRO EMPRESA, etc.)
 // 🔧 CORRIGIDO: Retorna acao_protetiva no /enriquecer
 // 🔧 CORRIGIDO: Passa preocupacao para o motor
+// 🔧 CORRIGIDO: Ação protetiva para PARE é "🚨 Interrompa este negócio agora."
 // ============================================
 
 const express = require("express");
@@ -154,6 +155,7 @@ const config = require("./motor.config");
 // ============================================
 const ACOES_PROTETIVAS = config.ACOES_PROTETIVAS || {};
 const ACAO_PADRAO = config.ACAO_PADRAO || 'Monitore de perto a execução do negócio.';
+const ACAO_PARE = config.ACAO_PARE || '🚨 Interrompa este negócio agora. O risco é crítico.';
 
 const app = express();
 
@@ -1634,7 +1636,11 @@ app.post("/enriquecer", async function(req, res) {
         // AÇÃO PROTETIVA
         // ============================================================
         var acaoProtetiva = ACAO_PADRAO;
-        if (preocupacaoId && ACOES_PROTETIVAS[preocupacaoId]) {
+
+        // Se a recomendação for PARE, usa a ação específica para PARE
+        if (resultadoMotor.recomendacao === 'PARE') {
+            acaoProtetiva = ACAO_PARE;
+        } else if (preocupacaoId && ACOES_PROTETIVAS[preocupacaoId]) {
             acaoProtetiva = ACOES_PROTETIVAS[preocupacaoId][tipoNegocio] || ACOES_PROTETIVAS[preocupacaoId]['analisar'] || ACAO_PADRAO;
         }
 
