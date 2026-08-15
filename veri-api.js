@@ -469,7 +469,6 @@ function salvarNoHistorico(cnpj, dados) {
     return null;
 }
 
-const VERSAO_ORQUESTRADOR = '1.3.0';
 const FONTES_UTILIZADAS = [
     'Google Search',
     'BrasilAPI',
