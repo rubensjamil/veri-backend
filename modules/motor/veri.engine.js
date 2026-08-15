@@ -351,7 +351,7 @@ function getNivelRisco(contrib) {
     return 'BAIXO';
 }
 
-// 🔧 NOVA ESCALA DE IMPACTO (até 1, 1-5, 5-10, 10-15, 15-20, >20)
+// 🔧 NOVA ESCALA DE IMPACTO
 function getNivelImpacto(dias) {
     if (dias <= 1) return { nivel: 'Muito Baixo', cor: '🟢' };
     if (dias <= 5) return { nivel: 'Baixo', cor: '🟢' };
@@ -562,10 +562,8 @@ function calcularRiscos(dados) {
     var isCompra = negocioStr.startsWith('comprar') || negocioStr.startsWith('contratar');
     var isVenda = negocioStr.startsWith('vender');
 
-    // 🔧 Ticket diário para o percentual de comprometimento (quem assume o compromisso)
     var ticketDiarioPercentual = 0;
     if (isCompra) {
-        // Compra: solicitante paga
         var parteSolicitante = {
             tipo: dados.solicitante.tipo || 'empresa',
             renda: dados.solicitante.renda || 0,
@@ -574,7 +572,6 @@ function calcularRiscos(dados) {
         };
         ticketDiarioPercentual = calcularTicketDiario(parteSolicitante);
     } else if (isVenda) {
-        // Venda: analisado paga
         var parteAnalisado = {
             tipo: dados.analisado.tipo || 'empresa',
             renda: dados.analisado.renda || 0,
@@ -583,7 +580,6 @@ function calcularRiscos(dados) {
         };
         ticketDiarioPercentual = calcularTicketDiario(parteAnalisado);
     } else {
-        // Fallback: usa analisado
         var parteAnalisadoFallback = {
             tipo: dados.analisado.tipo || 'empresa',
             renda: dados.analisado.renda || 0,
@@ -597,13 +593,11 @@ function calcularRiscos(dados) {
         percentualComprometimento = Math.round((valorParcela / ticketDiarioPercentual) * 100);
     }
 
-    // 🔧 DIAS COMPROMETIMENTO: cada parte usa seu próprio ticket
     var pagamento = dados.negocio.tipo_pagamento || 'avista';
     var valorBaseParaImpacto = (pagamento === 'aprazo' || pagamento === 'a prazo') && parcelas > 1
         ? valorParcela
         : valorNegocio;
 
-    // 🔧 Impacto para o analisado (usa ticket do analisado)
     var parteAnalisadoImpacto = {
         tipo: dados.analisado.tipo || 'empresa',
         renda: dados.analisado.renda || 0,
@@ -612,7 +606,6 @@ function calcularRiscos(dados) {
     };
     var impactoAnalisado = calcularImpacto(valorBaseParaImpacto, parteAnalisadoImpacto);
 
-    // 🔧 Impacto para o solicitante (usa ticket do solicitante)
     var parteSolicitanteImpacto = {
         tipo: dados.solicitante.tipo || 'empresa',
         renda: dados.solicitante.renda || 0,
@@ -621,7 +614,6 @@ function calcularRiscos(dados) {
     };
     var impactoASolicitante = calcularImpacto(valorBaseParaImpacto, parteSolicitanteImpacto);
 
-    // 🔧 Para compatibilidade com o frontend, usamos o impacto do analisado como principal (já que a venda é o cenário mais comum)
     var diasComprometimento = impactoAnalisado.dias;
     var nivelImpacto = impactoAnalisado.nivel;
 
@@ -788,7 +780,6 @@ function calcularRiscos(dados) {
         percentual_comprometimento: percentualComprometimento,
         dias_comprometimento: diasComprometimento,
         nivel_impacto: nivelImpacto,
-        // 🔧 NOVOS CAMPOS PARA O FRONTEND EXIBIR IMPACTO POR PARTE
         impacto_analisado: {
             dias: impactoAnalisado.dias,
             ticket: impactoAnalisado.ticket,
