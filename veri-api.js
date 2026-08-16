@@ -38,6 +38,7 @@
 // 🔧 CORRIGIDO: Retorna acao_protetiva no /enriquecer
 // 🔧 CORRIGIDO: Passa preocupacao para o motor
 // 🔧 CORRIGIDO: Ação protetiva para PARE é "Venda à vista ou com entrada significativa e cobre juros e multas sobre atrasos."
+// 🔧 CORRIGIDO: Rota /teste-cnpj sempre retorna 200 com encontrado: false para evitar erro no frontend
 // ============================================
 
 const express = require("express");
@@ -152,7 +153,7 @@ const config = require("./motor.config");
 // ============================================
 const ACOES_PROTETIVAS = config.ACOES_PROTETIVAS || {};
 const ACAO_PADRAO = config.ACAO_PADRAO || 'Monitore de perto a execução do negócio.';
-const ACAO_PARE = 'Venda à vista ou com entrada significativa e cobre juros e multas sobre atrasos.';
+const ACAO_PARE = '🚨 NÃO FAÇA ESTE NEGÓCIO. Venda à vista ou com entrada significativa e cobre juros e multas sobre atrasos.';
 
 const app = express();
 
@@ -758,13 +759,30 @@ async function cadeiaDeBuscaCNPJ(limpo) {
 // ============================================
 app.get("/", function(req, res) { res.json({ status: "VERI API Online", versao: VERSAO_API }); });
 
+// 🔧 CORREÇÃO: Rota /teste-cnpj agora retorna 200 com encontrado: false
 app.get("/teste-cnpj/:cnpj", async function(req, res) {
     try {
         const limpo = normalizarCNPJ(req.params.cnpj);
-        if (limpo.length !== 14) return res.status(400).json({ error: "CNPJ inválido" });
+        if (limpo.length !== 14) {
+            return res.status(400).json({ error: "CNPJ inválido" });
+        }
         const resultado = await cadeiaDeBuscaCNPJ(limpo);
-        if (resultado) return res.json(resultado);
-        res.status(404).json({ error: "CNPJ nao encontrado" });
+        if (resultado) {
+            return res.json({ ...resultado, encontrado: true });
+        }
+        // Retorna 200 com encontrado: false para não gerar erro no frontend
+        return res.json({
+            cnpj: limpo,
+            encontrado: false,
+            razao_social: "",
+            nome_fantasia: "",
+            porte: "",
+            data_abertura: "",
+            situacao: "",
+            uf: "",
+            municipio: "",
+            fonte: "fallback"
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -1345,6 +1363,7 @@ app.post("/enriquecer", async function(req, res) {
 
         var acaoProtetiva = ACAO_PADRAO;
 
+        // 🔧 CORREÇÃO: ação protetiva para PARE
         if (resultadoMotor.recomendacao === 'PARE') {
             acaoProtetiva = ACAO_PARE;
         } else if (preocupacaoId && ACOES_PROTETIVAS[preocupacaoId]) {
