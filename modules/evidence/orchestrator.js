@@ -1,4 +1,4 @@
-/ ============================================================
+// ============================================================
 // orchestrator.js - Orquestra fontes de dados REAIS para a VERI
 // VERSÃO DEFINITIVA 4.0.15 - CORREÇÃO DE LÓGICA
 // CORRIGIDO: Banco regional fornece CNPJ + faturamento + porte GIGANTE
