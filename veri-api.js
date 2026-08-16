@@ -1498,30 +1498,68 @@ const PORT = process.env.PORT || 3000;
 
 async function iniciarServidor() {
     console.log('🚀 Iniciando servidor VERI API...');
-    
+
+    // ============================================================
+    // VERIFICA APENAS A DISPONIBILIDADE DO CSV NO GOOGLE CLOUD STORAGE
+    // O CSV NÃO É CARREGADO PARA O DISCO LOCAL NEM PARA A MEMÓRIA.
+    // A CONSULTA AO CSV É FEITA PELO ORCHESTRATOR COMO FALLBACK.
+    // ============================================================
     if (storage) {
         try {
             const bucket = storage.bucket(BUCKET_NAME);
             const file = bucket.file(CSV_FILE);
             const [exists] = await file.exists();
+
             if (exists) {
                 console.log('✅ CSV disponível no Google Cloud Storage.');
+                console.log('📦 CSV configurado como fallback no Storage.');
             } else {
-                console.warn('⚠️ CSV não encontrado no Storage.');
+                console.warn('⚠️ CSV não encontrado no Google Cloud Storage.');
             }
         } catch (err) {
             console.warn('⚠️ Erro ao verificar CSV no Storage:', err.message);
         }
     } else {
-        console.warn('⚠️ Storage não disponível. Busca no CSV desativada.');
+        console.warn('⚠️ Storage não disponível. Fallback CSV no Storage desativado.');
     }
-    
-    try {
-        await carregarCSVIndex();
-    } catch (err) {
-        console.warn('⚠️ Erro ao carregar CSV na inicialização:', err.message);
-        console.warn('⚠️ O servidor continuará rodando sem o índice CSV local.');
-    }
+
+    // ============================================================
+    // NÃO CARREGAR CSV LOCALMENTE
+    // O arquivo possui dezenas de milhões de registros e NÃO deve
+    // ser carregado em memória nem procurado em /app.
+    //
+    // A cadeia de busca do CNPJ é responsabilidade do orchestrator:
+    //
+    // 1. Banco regional (cnpjs_famosos)
+    // 2. BrasilAPI
+    // 3. Fallback da BrasilAPI
+    // 4. CSV no Google Cloud Storage
+    //
+    // Portanto, NÃO chamar carregarCSVIndex() aqui.
+    // ============================================================
+    console.log('📊 Índice CSV local desativado.');
+    console.log('🔄 CSV Storage permanece disponível como fallback.');
+
+    const server = app.listen(PORT, '0.0.0.0', function() {
+        console.log("✅ VERI API v" + VERSAO_API + " rodando na porta " + PORT);
+        console.log("⚙️ Motor VERI integrado à rota /enriquecer");
+        console.log("📊 Busca BrasilAPI ativada para porte e data_abertura");
+        console.log('🚀 REVISÃO CORRIGIDA - JSON_INVALIDO RESOLVIDO');
+        console.log('📊 CSV indexado: ⚠️ NÃO (fallback ativo - Google Cloud Storage)');
+    });
+
+    server.on('error', function(err) {
+        console.error('❌ Erro no servidor:', err);
+
+        if (err.code === 'EADDRINUSE') {
+            console.error('⚠️ Porta ' + PORT + ' já está em uso!');
+        }
+    });
+}
+
+iniciarServidor();
+
+module.exports = app;
     
     const server = app.listen(PORT, '0.0.0.0', function() {
         console.log("✅ VERI API v" + VERSAO_API + " rodando na porta " + PORT);
