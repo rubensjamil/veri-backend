@@ -1013,7 +1013,7 @@ app.post("/enriquecer", async function(req, res) {
 
     const cnpjLimpo = normalizarCNPJ(cnpj);
     const preocupacaoId = (preocupacoes && preocupacoes.length > 0) ? preocupacoes[0] : null;
-    const tipoNegocio = negocio ? negocio.split('_')[0] : 'analisar';
+    var tipoNegocio = negocio ? negocio.split('_')[0] : 'analisar';
 
     try {
         if (ENABLE_CACHE && cnpjLimpo && cacheMemoria.has(cnpjLimpo)) {
