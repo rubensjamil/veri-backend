@@ -10,6 +10,8 @@
 // CORRIGIDO: Não cria site fictício (retorna null)
 // CORRIGIDO: Logs adicionados para rastrear faturamento
 // 🔧 CORRIGIDO: Adicionada função normalizarDocumento para compatibilidade
+// 🔧 CORRIGIDO: Adicionada função executarBuscas para orquestrar buscas paralelas
+// 🔧 CORRIGIDO: Função encontrarCNPJPorNome com limpeza robusta
 // ============================================================
 
 const { googleSearch } = require('./sources/googleSearch');
@@ -248,11 +250,6 @@ async function buscarCSVnoStorage(termo) {
 
         return null;
     }
-}
-
-function normalizarDocumento(doc) {
-    if (!doc) return '';
-    return String(doc).replace(/\D/g, '');
 }
 
 async function carregarHistorico() {
@@ -494,6 +491,7 @@ function gerarQueries(nome, cnpj, cpf, uf, porte) {
     };
 }
 
+// 🔧 CORREÇÃO: função encontrarCNPJPorNome com limpeza robusta
 function encontrarCNPJPorNome(nome, uf) {
     if (!nome || typeof nome !== 'string') {
         return null;
@@ -504,14 +502,14 @@ function encontrarCNPJPorNome(nome, uf) {
     }
 
     var nomeBusca = nome.toLowerCase().trim();
-
     nomeBusca = nomeBusca
         .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '');
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
 
-    var estados = uf
-        ? [uf]
-        : Object.keys(CNPJS_FAMOSOS);
+    var estados = uf ? [uf] : Object.keys(CNPJS_FAMOSOS);
 
     for (var i = 0; i < estados.length; i++) {
         var ufKey = estados[i];
@@ -519,35 +517,25 @@ function encontrarCNPJPorNome(nome, uf) {
 
         for (var j = 0; j < empresas.length; j++) {
             var empresa = empresas[j];
+            if (empresa.cnpj === 'PESQUISAR') continue;
 
-            if (empresa.cnpj === 'PESQUISAR') {
-                continue;
-            }
-
-            var nomeEmpresa =
-                empresa.nome.toLowerCase().trim();
-
+            var nomeEmpresa = empresa.nome.toLowerCase().trim();
             nomeEmpresa = nomeEmpresa
                 .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '');
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^a-z0-9\s]/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
 
-            if (
-                nomeEmpresa.indexOf(nomeBusca) !== -1 ||
-                nomeBusca.indexOf(nomeEmpresa) !== -1
-            ) {
+            if (nomeEmpresa.indexOf(nomeBusca) !== -1 || nomeBusca.indexOf(nomeEmpresa) !== -1) {
                 console.log(
-                    '✅ Encontrado no banco local: ' +
-                    empresa.nome +
-                    ' CNPJ: ' +
-                    empresa.cnpj +
-                    ' UF: ' +
-                    ufKey
+                    '✅ Encontrado no banco local: ' + empresa.nome +
+                    ' CNPJ: ' + empresa.cnpj +
+                    ' UF: ' + ufKey
                 );
-
                 return {
                     cnpj: empresa.cnpj,
-                    faturamento_anual:
-                        empresa.faturamento_anual,
+                    faturamento_anual: empresa.faturamento_anual,
                     setor: empresa.setor,
                     uf: ufKey,
                     nome_encontrado: empresa.nome,
@@ -558,11 +546,7 @@ function encontrarCNPJPorNome(nome, uf) {
         }
     }
 
-    console.log(
-        '⚠️ Nome nao encontrado no banco local: ' +
-        nome
-    );
-
+    console.log('⚠️ Nome nao encontrado no banco local: ' + nome);
     return null;
 }
 
@@ -1075,6 +1059,7 @@ async function buscarSiteOficial(nome) {
 
     return null;
 }
+
 async function buscarCNPJnaBrasilAPI(cnpj, tentativa) {
     var tentativaAtual = tentativa || 1;
     var maxTentativas = 2;
@@ -1236,7 +1221,6 @@ async function buscarCNPJnaReceitaWS(cnpj) {
     return null;
 }
 
-
 /*
  * ============================================================
  * CADEIA DE BUSCA DE CNPJ
@@ -1346,6 +1330,51 @@ async function cadeiaDeBuscaCNPJ(limpo) {
 
     return null;
 }
+
+// ============================================================
+// EXECUTAR BUSCAS PARALELAS
+// ============================================================
+async function executarBuscas(queries, nome) {
+    var resultados = {
+        google: [],
+        noticias: [],
+        reclameData: [],
+        processos: [],
+        consumidorData: [],
+        protestos: []
+    };
+
+    try {
+        if (queries.google) {
+            resultados.google = await buscarGoogleComAbort(queries.google, TIMEOUTS.GOOGLE_SEARCH) || [];
+        }
+
+        if (queries.news) {
+            resultados.noticias = await buscarGoogleComAbort(queries.news, TIMEOUTS.NOTICIAS) || [];
+        }
+
+        if (queries.reclameFallback) {
+            resultados.reclameData = await buscarGoogleComAbort(queries.reclameFallback, TIMEOUTS.RECLAME_AQUI) || [];
+        }
+
+        if (queries.judicial && queries.judicial.length > 0) {
+            resultados.processos = await buscarProcessosJudiciaisOtimizados(queries.judicial, nome) || [];
+        }
+
+        if (queries.protestos) {
+            resultados.protestos = await buscarProtestos(queries.protestos) || [];
+        }
+
+        if (queries.consumidorFallback) {
+            resultados.consumidorData = await buscarGoogleComAbort(queries.consumidorFallback, TIMEOUTS.CONSUMIDOR_GOV) || [];
+        }
+
+    } catch (err) {
+        console.warn('Erro ao executar buscas paralelas:', err.message);
+    }
+
+    return resultados;
+}
 /*
  * ============================================================
  * COLETA PRINCIPAL DE EVIDÊNCIAS
@@ -2104,763 +2133,3 @@ module.exports = {
     buscarCNPJnaReceitaWS,
     cadeiaDeBuscaCNPJ
 };
-
-/*
- * ============================================================
- * COLETA PRINCIPAL DE EVIDÊNCIAS
- * ============================================================
- */
-async function coletarEvidenciasReais(
-    nome,
-    cnpj,
-    cpf,
-    uf,
-    modulo,
-    subModulo
-) {
-    var inicio = Date.now();
-
-    console.log(
-        '🔍 INICIANDO COLETA PARA:',
-        nome
-    );
-
-    var cnpjEncontrado = cnpj;
-    var dadosCadastrais = null;
-
-    var faturamentoDoBanco = null;
-    var setorDoBanco = null;
-    var porteDoBanco = null;
-
-    var ufEncontrada = uf || null;
-
-    /*
-     * ========================================================
-     * 1. PRIMEIRO: BANCO REGIONAL
-     *
-     * O banco regional NÃO substitui a consulta cadastral.
-     *
-     * Ele fornece:
-     * - CNPJ
-     * - faturamento
-     * - setor
-     * - porte GIGANTE
-     * - UF
-     *
-     * Depois o CNPJ encontrado segue para a cadeia
-     * cadastral.
-     * ========================================================
-     */
-
-    if (!cnpjEncontrado && nome) {
-        var resultadoLocal =
-            encontrarCNPJPorNome(nome, uf);
-
-        if (
-            resultadoLocal &&
-            resultadoLocal.cnpj
-        ) {
-            console.log(
-                '📊 BANCO LOCAL ENCONTRADO:',
-                resultadoLocal.nome_encontrado
-            );
-
-            console.log(
-                '📊 FATURAMENTO DO BANCO:',
-                resultadoLocal.faturamento_anual
-            );
-
-            cnpjEncontrado =
-                resultadoLocal.cnpj;
-
-            faturamentoDoBanco =
-                resultadoLocal.faturamento_anual;
-
-            setorDoBanco =
-                resultadoLocal.setor;
-
-            porteDoBanco = 'GIGANTE';
-
-            ufEncontrada =
-                resultadoLocal.uf || uf;
-
-            console.log(
-                'CNPJ encontrado no banco local: ' +
-                resultadoLocal.cnpj +
-                ' (' +
-                resultadoLocal.nome_encontrado +
-                ') - UF: ' +
-                ufEncontrada
-            );
-        }
-    }
-
-    /*
-     * Se o usuário já forneceu o CNPJ, verifica se ele
-     * pertence ao banco regional.
-     *
-     * Se pertencer:
-     * mantém faturamento/porte/setor do banco.
-     */
-    if (
-        cnpjEncontrado &&
-        !faturamentoDoBanco
-    ) {
-        var resultadoPorCNPJ =
-            encontrarCNPJPorCNPJ(
-                cnpjEncontrado
-            );
-
-        if (resultadoPorCNPJ) {
-            console.log(
-                '📊 BANCO LOCAL ENCONTRADO POR CNPJ:',
-                resultadoPorCNPJ.nome
-            );
-
-            console.log(
-                '📊 FATURAMENTO DO BANCO:',
-                resultadoPorCNPJ.faturamento_anual
-            );
-
-            faturamentoDoBanco =
-                resultadoPorCNPJ.faturamento_anual;
-
-            setorDoBanco =
-                resultadoPorCNPJ.setor;
-
-            porteDoBanco = 'GIGANTE';
-
-            ufEncontrada =
-                resultadoPorCNPJ.uf ||
-                ufEncontrada;
-        }
-    }
-
-
-    /*
-     * ========================================================
-     * 2. CONSULTA CADASTRAL
-     *
-     * O CNPJ encontrado no banco regional segue para
-     * consultarReceita().
-     *
-     * consultarReceita():
-     * BrasilAPI
-     *     ↓
-     * ReceitaWS
-     *
-     * Somente se essa cadeia falhar:
-     *     ↓
-     * CSV Storage
-     *
-     * O CSV NÃO é chamado antes da BrasilAPI.
-     * ========================================================
-     */
-
-    if (cnpjEncontrado) {
-        try {
-            console.log(
-                '🔍 Buscando dados complementares para CNPJ:',
-                cnpjEncontrado
-            );
-
-            /*
-             * Primeiro consulta Receita, que internamente
-             * utiliza BrasilAPI e seu fallback.
-             */
-            var dadosCadastraisCompletos =
-                await consultarReceita(
-                    cnpjEncontrado
-                );
-
-            /*
-             * Se BrasilAPI + fallback da consulta Receita
-             * não retornarem nada, somente então consulta
-             * o CSV do Google Cloud Storage.
-             */
-            if (!dadosCadastraisCompletos) {
-                console.log(
-                    '⚠️ APIs cadastrais falharam, tentando CSV no Storage...'
-                );
-
-                dadosCadastraisCompletos =
-                    await buscarCSVnoStorage(
-                        cnpjEncontrado
-                    );
-            }
-
-            if (dadosCadastraisCompletos) {
-
-                /*
-                 * Preserva faturamento do banco regional.
-                 */
-                if (faturamentoDoBanco) {
-                    dadosCadastraisCompletos.faturamento_anual =
-                        faturamentoDoBanco;
-
-                    console.log(
-                        '✅ FATURAMENTO DO BANCO PRESERVADO:',
-                        faturamentoDoBanco
-                    );
-                }
-
-                /*
-                 * Preserva setor do banco regional.
-                 */
-                if (setorDoBanco) {
-                    dadosCadastraisCompletos.setor =
-                        setorDoBanco;
-                }
-
-                /*
-                 * Preserva porte GIGANTE do banco regional.
-                 */
-                if (porteDoBanco) {
-                    dadosCadastraisCompletos.porte =
-                        porteDoBanco;
-
-                    console.log(
-                        '✅ PORTE DO BANCO PRESERVADO: GIGANTE'
-                    );
-                } else {
-                    dadosCadastraisCompletos.porte =
-                        dadosCadastraisCompletos.porte ||
-                        'MEDIO';
-                }
-
-                dadosCadastraisCompletos.fonte_cnpj =
-                    dadosCadastraisCompletos.fonte ||
-                    'consulta_cadastral';
-
-                dadosCadastrais =
-                    dadosCadastraisCompletos;
-
-                ufEncontrada =
-                    dadosCadastrais.uf ||
-                    ufEncontrada;
-
-                console.log(
-                    '✅ Dados complementares obtidos para CNPJ: ' +
-                    cnpjEncontrado +
-                    ' porte: ' +
-                    dadosCadastrais.porte +
-                    ' abertura: ' +
-                    (
-                        dadosCadastrais.data_abertura ||
-                        dadosCadastrais.abertura ||
-                        ''
-                    )
-                );
-
-            } else {
-
-                console.warn(
-                    '⚠️ Nenhuma fonte retornou dados complementares para CNPJ:',
-                    cnpjEncontrado
-                );
-
-                /*
-                 * Ainda temos os dados do banco regional.
-                 * Portanto não perdemos faturamento/porte/setor.
-                 */
-                dadosCadastrais = {
-                    cnpj: cnpjEncontrado,
-                    razao_social: nome || '',
-                    porte:
-                        porteDoBanco || 'MEDIO',
-                    data_abertura: '',
-                    situacao: 'ATIVA',
-                    uf:
-                        ufEncontrada || '',
-                    fonte_cnpj:
-                        porteDoBanco
-                            ? 'banco_local_sem_api'
-                            : 'fallback_final'
-                };
-
-                if (faturamentoDoBanco) {
-                    dadosCadastrais.faturamento_anual =
-                        faturamentoDoBanco;
-                }
-
-                if (setorDoBanco) {
-                    dadosCadastrais.setor =
-                        setorDoBanco;
-                }
-            }
-
-        } catch (err) {
-
-            console.warn(
-                '⚠️ Erro ao buscar dados complementares:',
-                err.message
-            );
-
-            /*
-             * Se a consulta cadastral gerar erro e o banco
-             * regional já tiver dados, preserva esses dados.
-             */
-            if (
-                !dadosCadastrais &&
-                faturamentoDoBanco
-            ) {
-                dadosCadastrais = {
-                    cnpj: cnpjEncontrado,
-                    razao_social: nome || '',
-                    porte:
-                        porteDoBanco || 'MEDIO',
-                    data_abertura: '',
-                    situacao: 'ATIVA',
-                    uf:
-                        ufEncontrada || '',
-                    faturamento_anual:
-                        faturamentoDoBanco,
-                    setor:
-                        setorDoBanco || '',
-                    fonte_cnpj:
-                        'banco_local_fallback'
-                };
-            }
-        }
-    }
-
-
-    /*
-     * ========================================================
-     * FALLBACK FINAL DE SEGURANÇA
-     * ========================================================
-     */
-
-    if (
-        !dadosCadastrais &&
-        cnpjEncontrado
-    ) {
-        dadosCadastrais = {
-            cnpj: cnpjEncontrado,
-            razao_social: nome || '',
-            porte:
-                porteDoBanco || 'MEDIO',
-            data_abertura: '',
-            situacao: 'ATIVA',
-            uf:
-                ufEncontrada || '',
-            fonte_cnpj:
-                'fallback_final'
-        };
-
-        if (faturamentoDoBanco) {
-            dadosCadastrais.faturamento_anual =
-                faturamentoDoBanco;
-        }
-
-        if (setorDoBanco) {
-            dadosCadastrais.setor =
-                setorDoBanco;
-        }
-
-        console.log(
-            '⚠️ Criando dadosCadastrais de fallback para CNPJ:',
-            cnpjEncontrado
-        );
-    }
-
-
-    /*
-     * ========================================================
-     * CPF
-     * ========================================================
-     */
-
-    var cpfEncontrado = cpf;
-
-    if (
-        !cpf &&
-        nome &&
-        !cnpjEncontrado
-    ) {
-        var cpfInfo =
-            await buscarCPFPorNome(nome);
-
-        if (cpfInfo) {
-            cpfEncontrado =
-                cpfInfo.cpf;
-        }
-    }
-
-
-    /*
-     * ========================================================
-     * PORTE UTILIZADO NAS BUSCAS
-     * ========================================================
-     */
-
-    var porteParaBusca =
-        dadosCadastrais &&
-        dadosCadastrais.porte
-            ? dadosCadastrais.porte
-            : 'MEDIO';
-
-    if (porteDoBanco) {
-        porteParaBusca = 'GIGANTE';
-    }
-
-    console.log(
-        '🔍 PORTE UTILIZADO PARA BUSCAS:',
-        porteParaBusca
-    );
-
-
-    /*
-     * ========================================================
-     * GERAÇÃO DAS QUERIES
-     * ========================================================
-     */
-
-    var queries = gerarQueries(
-        nome,
-        cnpjEncontrado,
-        cpfEncontrado,
-        ufEncontrada,
-        porteParaBusca
-    );
-
-
-    /*
-     * ========================================================
-     * SITE OFICIAL
-     * ========================================================
-     */
-
-    var siteOficial =
-        await buscarSiteOficial(
-            nome ||
-            (
-                dadosCadastrais &&
-                dadosCadastrais.razao_social
-            ) ||
-            ''
-        );
-
-    console.log(
-        '🔍 Site encontrado: ' +
-        siteOficial
-    );
-
-
-    /*
-     * ========================================================
-     * DEMAIS FONTES
-     * ========================================================
-     */
-
-    var resultados =
-        await executarBuscas(
-            queries,
-            nome
-        );
-
-
-    /*
-     * ========================================================
-     * RASTREABILIDADE
-     * ========================================================
-     */
-
-    var rastreabilidade = {
-        google_search: {
-            sucesso:
-                resultados.google !== null &&
-                resultados.google.length > 0,
-            itens:
-                resultados.google
-                    ? resultados.google.length
-                    : 0
-        },
-
-        reclame_aqui: {
-            sucesso:
-                resultados.reclameData !== null &&
-                resultados.reclameData.length > 0,
-            itens:
-                resultados.reclameData
-                    ? resultados.reclameData.length
-                    : 0
-        },
-
-        noticias: {
-            sucesso:
-                resultados.noticias !== null &&
-                resultados.noticias.length > 0,
-            itens:
-                resultados.noticias
-                    ? resultados.noticias.length
-                    : 0
-        },
-
-        processos_judiciais: {
-            sucesso:
-                resultados.processos !== null &&
-                resultados.processos.length > 0,
-
-            itens:
-                resultados.processos
-                    ? resultados.processos.length
-                    : 0,
-
-            tribunais_encontrados:
-                resultados.processos
-                    ? (function() {
-                        var tribunais = {};
-
-                        for (
-                            var i = 0;
-                            i < resultados.processos.length;
-                            i++
-                        ) {
-                            var t =
-                                resultados.processos[i]
-                                    .tribunal ||
-                                'desconhecido';
-
-                            tribunais[t] = true;
-                        }
-
-                        return Object.keys(
-                            tribunais
-                        );
-                    })()
-                    : []
-        },
-
-        consumidor_gov: {
-            sucesso:
-                resultados.consumidorData !== null &&
-                resultados.consumidorData.length > 0,
-
-            itens:
-                resultados.consumidorData
-                    ? resultados.consumidorData.length
-                    : 0
-        },
-
-        protestos: {
-            sucesso:
-                resultados.protestos !== null &&
-                resultados.protestos.length > 0,
-
-            itens:
-                resultados.protestos
-                    ? resultados.protestos.length
-                    : 0
-        },
-
-        site_oficial: {
-            sucesso:
-                siteOficial !== null,
-            itens:
-                siteOficial
-                    ? 1
-                    : 0
-        },
-
-        cnpj_por_nome: {
-            sucesso:
-                cnpjEncontrado !== cnpj,
-
-            fonte:
-                dadosCadastrais &&
-                dadosCadastrais.fonte_cnpj
-                    ? dadosCadastrais.fonte_cnpj
-                    : 'nao_buscado'
-        },
-
-        banco_local: {
-            sucesso:
-                faturamentoDoBanco !== null
-        },
-
-        receita_federal: {
-            sucesso:
-                dadosCadastrais !== null,
-            itens:
-                dadosCadastrais
-                    ? 1
-                    : 0
-        }
-    };
-
-
-    /*
-     * ========================================================
-     * FONTES
-     * ========================================================
-     */
-
-    var fontes = {
-        google_search:
-            resultados.google || [],
-
-        reclame_aqui:
-            resultados.reclameData || [],
-
-        noticias:
-            resultados.noticias || [],
-
-        processos_judiciais:
-            resultados.processos || [],
-
-        consumidor_gov:
-            resultados.consumidorData || [],
-
-        protestos:
-            resultados.protestos || []
-    };
-
-
-    /*
-     * ========================================================
-     * SITE
-     * ========================================================
-     */
-
-    if (
-        siteOficial &&
-        dadosCadastrais
-    ) {
-        dadosCadastrais.site =
-            siteOficial;
-
-    } else if (
-        siteOficial &&
-        !dadosCadastrais
-    ) {
-        dadosCadastrais = {
-            site: siteOficial
-        };
-    }
-
-
-    /*
-     * ========================================================
-     * UF
-     * ========================================================
-     */
-
-    if (
-        dadosCadastrais &&
-        ufEncontrada &&
-        !dadosCadastrais.uf
-    ) {
-        dadosCadastrais.uf =
-            ufEncontrada;
-    }
-
-
-    /*
-     * ========================================================
-     * FATURAMENTO
-     *
-     * Nunca sobrescrever faturamento do banco regional.
-     * ========================================================
-     */
-
-    if (
-        faturamentoDoBanco &&
-        dadosCadastrais
-    ) {
-        dadosCadastrais.faturamento_anual =
-            faturamentoDoBanco;
-    }
-
-    console.log(
-        '📤 FATURAMENTO FINAL:',
-        faturamentoDoBanco
-    );
-
-
-    /*
-     * ========================================================
-     * RESULTADO FINAL
-     * ========================================================
-     */
-
-    var resultado = {
-        fontes: fontes,
-
-        dados_cadastrais:
-            dadosCadastrais || null,
-
-        cnpj_encontrado:
-            cnpjEncontrado || null,
-
-        cpf_encontrado:
-            cpfEncontrado || null,
-
-        site_encontrado:
-            siteOficial || null,
-
-        uf_encontrada:
-            ufEncontrada || null,
-
-        faturamento_anual:
-            faturamentoDoBanco || null,
-
-        rastreabilidade:
-            rastreabilidade,
-
-        fontes_utilizadas:
-            FONTES_UTILIZADAS,
-
-        versao_orquestrador:
-            VERSAO_ORQUESTRADOR,
-
-        modulo:
-            modulo || 'geral',
-
-        subModulo:
-            subModulo || 'geral',
-
-        porte_utilizado:
-            porteParaBusca,
-
-        _meta: {
-            timestamp:
-                new Date().toISOString(),
-
-            tempo_total_ms:
-                Date.now() - inicio,
-
-            hash_bruto:
-                crypto
-                    .createHash('sha256')
-                    .update(
-                        JSON.stringify(fontes)
-                    )
-                    .digest('hex')
-        }
-    };
-
-    console.log(
-        '📤 ORQUESTRADOR retornando com faturamento_anual: ' +
-        resultado.faturamento_anual +
-        ' site: ' +
-        resultado.site_encontrado
-    );
-
-    return resultado;
-}
-
-
-/*
- * ============================================================
- * EXPORTS
- * ============================================================
- */
-
-module.exports = {
-    coletarEvidenciasReais,
-    buscarCNPJnaBrasilAPI,
-    buscarCNPJnaReceitaWS,
-    cadeiaDeBuscaCNPJ
-};
-
