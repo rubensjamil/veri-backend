@@ -39,6 +39,7 @@
 // 🔧 CORRIGIDO: Passa preocupacao para o motor
 // 🔧 CORRIGIDO: Ação protetiva para PARE é "Venda à vista ou com entrada significativa e cobre juros e multas sobre atrasos."
 // 🔧 CORRIGIDO: Rota /teste-cnpj sempre retorna 200 com encontrado: false para evitar erro no frontend
+// 🔧 CORRIGIDO: Adicionada função normalizarDocumento para compatibilidade
 // ============================================
 
 const express = require("express");
@@ -209,6 +210,10 @@ const CSV_PATH = path.join(__dirname, 'dados-abertos-zip', 'cnpj_busca_6_colunas
 function normalizarCNPJ(doc) {
     if (!doc) return '';
     return doc.replace(/[.\-\/]/g, '').toUpperCase();
+}
+
+function normalizarDocumento(doc) {
+    return normalizarCNPJ(doc);
 }
 
 function isCNPJ(valor) {
@@ -1363,7 +1368,6 @@ app.post("/enriquecer", async function(req, res) {
 
         var acaoProtetiva = ACAO_PADRAO;
 
-        // 🔧 CORREÇÃO: ação protetiva para PARE
         if (resultadoMotor.recomendacao === 'PARE') {
             acaoProtetiva = ACAO_PARE;
         } else if (preocupacaoId && ACOES_PROTETIVAS[preocupacaoId]) {
