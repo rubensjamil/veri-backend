@@ -12,6 +12,7 @@
 // 🔧 CORRIGIDO: Adicionada função normalizarDocumento para compatibilidade
 // 🔧 CORRIGIDO: Adicionada função executarBuscas para orquestrar buscas paralelas
 // 🔧 CORRIGIDO: Função encontrarCNPJPorNome com limpeza robusta
+// 🔧 CORRIGIDO: Busca data_abertura para GIGANTES do banco regional
 // ============================================================
 
 const { googleSearch } = require('./sources/googleSearch');
@@ -69,12 +70,6 @@ const CSV_FILE = 'cnpj_busca_6_colunas.csv';
 
 // ============================================================
 // BUSCA NO CSV DIRETAMENTE NO STORAGE
-// IMPORTANTE:
-// O CSV NÃO é consultado de forma preventiva.
-// Ele somente é chamado como FALLBACK depois que as fontes
-// anteriores de dados cadastrais falharem.
-//
-// A busca é feita diretamente no Google Cloud Storage.
 // ============================================================
 async function buscarCSVnoStorage(termo) {
     if (!storage) {
@@ -214,15 +209,6 @@ async function buscarCSVnoStorage(termo) {
                             return;
                         }
                     }
-
-                    /*
-                     * NÃO limitar a leitura arbitrariamente a 100.000 linhas.
-                     *
-                     * O arquivo possui dezenas de milhões de registros.
-                     * Como este método é FALLBACK, quando acionado ele precisa
-                     * poder continuar a leitura até encontrar o CNPJ ou chegar
-                     * ao final do arquivo, respeitando somente o timeout.
-                     */
                 })
                 .on('end', () => {
                     console.log(
@@ -1462,6 +1448,17 @@ async function coletarEvidenciasReais(
                 ') - UF: ' +
                 ufEncontrada
             );
+
+            // 🔧 BUSCAR DATA_ABERTURA PARA GIGANTES DO BANCO REGIONAL
+            try {
+                var dadosComplementares = await consultarReceita(resultadoLocal.cnpj);
+                if (dadosComplementares && dadosComplementares.data_abertura) {
+                    resultadoLocal.data_abertura = dadosComplementares.data_abertura;
+                    console.log('✅ Data de abertura obtida para GIGANTE:', resultadoLocal.data_abertura);
+                }
+            } catch (e) {
+                console.warn('⚠️ Não foi possível obter data_abertura para o GIGANTE:', resultadoLocal.cnpj);
+            }
         }
     }
 
@@ -1503,6 +1500,17 @@ async function coletarEvidenciasReais(
             ufEncontrada =
                 resultadoPorCNPJ.uf ||
                 ufEncontrada;
+
+            // 🔧 BUSCAR DATA_ABERTURA PARA GIGANTES DO BANCO REGIONAL
+            try {
+                var dadosComplementares = await consultarReceita(resultadoPorCNPJ.cnpj);
+                if (dadosComplementares && dadosComplementares.data_abertura) {
+                    resultadoPorCNPJ.data_abertura = dadosComplementares.data_abertura;
+                    console.log('✅ Data de abertura obtida para GIGANTE:', resultadoPorCNPJ.data_abertura);
+                }
+            } catch (e) {
+                console.warn('⚠️ Não foi possível obter data_abertura para o GIGANTE:', resultadoPorCNPJ.cnpj);
+            }
         }
     }
 
@@ -1598,6 +1606,17 @@ async function coletarEvidenciasReais(
                         'MEDIO';
                 }
 
+                // 🔧 Preserva data_abertura do banco regional se existir
+                if (resultadoLocal && resultadoLocal.data_abertura) {
+                    dadosCadastraisCompletos.data_abertura =
+                        resultadoLocal.data_abertura;
+                    console.log('✅ Data de abertura do banco regional preservada:', resultadoLocal.data_abertura);
+                } else if (resultadoPorCNPJ && resultadoPorCNPJ.data_abertura) {
+                    dadosCadastraisCompletos.data_abertura =
+                        resultadoPorCNPJ.data_abertura;
+                    console.log('✅ Data de abertura do banco regional preservada:', resultadoPorCNPJ.data_abertura);
+                }
+
                 dadosCadastraisCompletos.fonte_cnpj =
                     dadosCadastraisCompletos.fonte ||
                     'consulta_cadastral';
@@ -1648,6 +1667,15 @@ async function coletarEvidenciasReais(
                             : 'fallback_final'
                 };
 
+                // 🔧 Preserva data_abertura do banco regional se existir
+                if (resultadoLocal && resultadoLocal.data_abertura) {
+                    dadosCadastrais.data_abertura =
+                        resultadoLocal.data_abertura;
+                } else if (resultadoPorCNPJ && resultadoPorCNPJ.data_abertura) {
+                    dadosCadastrais.data_abertura =
+                        resultadoPorCNPJ.data_abertura;
+                }
+
                 if (faturamentoDoBanco) {
                     dadosCadastrais.faturamento_anual =
                         faturamentoDoBanco;
@@ -1690,6 +1718,15 @@ async function coletarEvidenciasReais(
                     fonte_cnpj:
                         'banco_local_fallback'
                 };
+
+                // 🔧 Preserva data_abertura do banco regional se existir
+                if (resultadoLocal && resultadoLocal.data_abertura) {
+                    dadosCadastrais.data_abertura =
+                        resultadoLocal.data_abertura;
+                } else if (resultadoPorCNPJ && resultadoPorCNPJ.data_abertura) {
+                    dadosCadastrais.data_abertura =
+                        resultadoPorCNPJ.data_abertura;
+                }
             }
         }
     }
@@ -1717,6 +1754,15 @@ async function coletarEvidenciasReais(
             fonte_cnpj:
                 'fallback_final'
         };
+
+        // 🔧 Preserva data_abertura do banco regional se existir
+        if (resultadoLocal && resultadoLocal.data_abertura) {
+            dadosCadastrais.data_abertura =
+                resultadoLocal.data_abertura;
+        } else if (resultadoPorCNPJ && resultadoPorCNPJ.data_abertura) {
+            dadosCadastrais.data_abertura =
+                resultadoPorCNPJ.data_abertura;
+        }
 
         if (faturamentoDoBanco) {
             dadosCadastrais.faturamento_anual =

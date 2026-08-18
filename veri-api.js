@@ -40,6 +40,8 @@
 // 🔧 CORRIGIDO: Ação protetiva para PARE é "Venda à vista ou com entrada significativa e cobre juros e multas sobre atrasos."
 // 🔧 CORRIGIDO: Rota /teste-cnpj sempre retorna 200 com encontrado: false para evitar erro no frontend
 // 🔧 CORRIGIDO: Adicionada função normalizarDocumento para compatibilidade
+// 🔧 CORRIGIDO: Substitui const tipoNegocio por var para evitar Assignment to constant variable
+// 🔧 CORRIGIDO: Validação de situação cadastral irregular (PARE automático)
 // ============================================
 
 const express = require("express");
@@ -154,7 +156,7 @@ const config = require("./motor.config");
 // ============================================
 const ACOES_PROTETIVAS = config.ACOES_PROTETIVAS || {};
 const ACAO_PADRAO = config.ACAO_PADRAO || 'Monitore de perto a execução do negócio.';
-const ACAO_PARE = '🚨 NÃO FAÇA ESTE NEGÓCIO. Venda à vista ou com entrada significativa e cobre juros e multas sobre atrasos.';
+const ACAO_PARE = '🚨 NÃO FAÇA NEGÓCIO COM ESTA EMPRESA. Risco de prejuízo total.';
 
 const app = express();
 
@@ -991,7 +993,7 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
 }
 
 // ============================================================
-// ROTA /enriquecer – CORRIGIDA (COM AÇÃO PROTETIVA)
+// ROTA /enriquecer – CORRIGIDA (COM AÇÃO PROTETIVA E SITUAÇÃO IRREGULAR)
 // ============================================================
 app.post("/enriquecer", async function(req, res) {
     const inicio = Date.now();
@@ -1238,6 +1240,74 @@ app.post("/enriquecer", async function(req, res) {
             tipoPagamento = req.body.pagamento || "avista";
             tipoNegocio = "negocio";
         }
+
+        // ============================================================
+        // 🔧 VALIDAÇÃO DE SITUAÇÃO CADASTRAL IRREGULAR
+        // ============================================================
+        var situacoesCriticas = [
+            'BAIXADA', 'SUSPENSA', 'INAPTA', 'INATIVA', 'CANCELADA',
+            'NULA', 'LIQUIDACAO', 'LIQUIDACAO JUDICIAL', 'RECUPERACAO JUDICIAL',
+            'INTERVENCAO', 'FALENCIA', 'INAPTIDAO'
+        ];
+
+        var situacaoAnalisado = (dadosCadastrais.situacao || '').toUpperCase().trim();
+        var isSituacaoIrregular = situacoesCriticas.indexOf(situacaoAnalisado) !== -1;
+
+        if (isSituacaoIrregular) {
+            var valorFormatado = 'R$ ' + valorNegocio.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            
+            var respostaIrregular = {
+                status: "sucesso",
+                dados: {
+                    dados_estruturados: {
+                        dados_cadastrais: dadosCadastrais,
+                        situacao: dadosCadastrais.situacao,
+                        porte: dadosCadastrais.porte
+                    }
+                },
+                dados_cadastrais: dadosCadastrais,
+                motor: {
+                    recomendacao: "PARE",
+                    score_global: 99,
+                    recuperabilidade: 1,
+                    risco_principal: "SITUACAO_IRREGULAR",
+                    top_riscos: [
+                        { risco: "FINANCEIRO", contribuicao: 90 },
+                        { risco: "INTEGRIDADE", contribuicao: 5 },
+                        { risco: "REPUTACIONAL", contribuicao: 3 },
+                        { risco: "VERACIDADE", contribuicao: 1 }
+                    ],
+                    acao_protetiva: "🚨 NÃO FAÇA NEGÓCIO COM ESTA EMPRESA. Risco de prejuízo total.",
+                    situacao_irregular: true,
+                    motivo: "Empresa com situação cadastral irregular: " + situacaoAnalisado,
+                    oportunidade_substituida: "🚫 Não faça negócio com essa empresa e evite prejuízo ou perda no valor de " + valorFormatado + ".",
+                    frase4_substituida: "A empresa está com situação cadastral irregular: " + situacaoAnalisado + ". Não recomendamos fazer negócio para não correr risco de prejuízo."
+                },
+                acao_protetiva: "🚨 NÃO FAÇA NEGÓCIO COM ESTA EMPRESA. Risco de prejuízo total.",
+                auditoria: {
+                    hash: crypto.createHash('sha256').update(JSON.stringify({ cnpj: cnpjLimpo, situacao: situacaoAnalisado })).digest('hex'),
+                    timestamp: new Date().toISOString(),
+                    tempo_execucao_ms: Date.now() - inicio,
+                    versao_api: VERSAO_API,
+                    versao_motor: VERSAO_MOTOR
+                },
+                meta: {
+                    tempo_ms: Date.now() - inicio,
+                    situacao_irregular: true,
+                    motivo: "Situação cadastral irregular"
+                }
+            };
+
+            if (cnpjLimpo) {
+                try { await setCache(cnpjLimpo, respostaIrregular); } catch(e) {}
+            }
+
+            return res.json(respostaIrregular);
+        }
+
+        // ============================================================
+        // SEGUE FLUXO NORMAL SE SITUAÇÃO FOR REGULAR
+        // ============================================================
 
         let estruturado = await estruturar(dadosOrquestrador.fontes, TIMEOUT_GEMINI_MS);
 
@@ -1562,3 +1632,4 @@ async function iniciarServidor() {
 iniciarServidor();
 
 module.exports = app;
+
