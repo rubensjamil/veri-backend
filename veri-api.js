@@ -645,7 +645,6 @@ async function buscarCNPJPorNome(nome) {
 
     return null;
 }
-
 async function buscarGoogleComAbort(query, timeoutMs) {
     var abort = criarAbortController(timeoutMs || TIMEOUTS.GOOGLE_SEARCH);
     try {
@@ -895,6 +894,7 @@ app.post("/analisar", async function(req, res) {
         res.status(500).json({ error: err.message });
     }
 });
+
 // ============================================================
 // FUNÇÃO: GERAR EVIDÊNCIAS DE FALLBACK (CORRIGIDA)
 // ============================================================
@@ -991,7 +991,6 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
 
     return evidencias;
 }
-
 // ============================================================
 // ROTA /enriquecer – CORRIGIDA (COM AÇÃO PROTETIVA E SITUAÇÃO IRREGULAR)
 // ============================================================
@@ -1632,4 +1631,3 @@ async function iniciarServidor() {
 iniciarServidor();
 
 module.exports = app;
-

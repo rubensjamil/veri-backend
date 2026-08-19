@@ -1,15 +1,15 @@
 // ============================================================
 // motor/veri.engine.js - Motor de Cálculo VERI
-// VERSÃO: 4.1.0
-// CORRIGIDO: Normalização do risco financeiro antes da recomendação
-// CORRIGIDO: Limiar PARE = 55% de ameaça OU risco financeiro >= 20 dias
-// CORRIGIDO: Risco financeiro retornado é o normalizado (não o bruto)
+// VERSÃO: 4.2.0
+// CORRIGIDO: Escala granular para classificação de probabilidade
+// CORRIGIDO: Risco financeiro normalizado usa a mesma escala do score global
+// CORRIGIDO: Recomendação baseada em score >= 55 OU risco financeiro >= 55%
 // ============================================================
 
 const config = require('../motor.config');
 
 // ============================================================
-// ESCALA DE IMPACTO (7 NÍVEIS) - DEFINITIVA
+// ESCALA DE IMPACTO (DIAS) - PARA IMPACTO DO NEGÓCIO
 // ============================================================
 function getNivelImpacto(dias) {
     if (dias <= 1) return { nivel: 'Muito Baixo', cor: '🟢', classe: 'muito-baixo' };
@@ -17,6 +17,18 @@ function getNivelImpacto(dias) {
     if (dias <= 10) return { nivel: 'Moderado', cor: '🟡', classe: 'moderado' };
     if (dias <= 15) return { nivel: 'Alto', cor: '🟠', classe: 'alto' };
     if (dias <= 20) return { nivel: 'Muito Alto', cor: '🔴', classe: 'muito-alto' };
+    return { nivel: 'Crítico', cor: '🔴🔴', classe: 'critico' };
+}
+
+// ============================================================
+// ESCALA GRANULAR DE PROBABILIDADE - PARA RISCOS INDIVIDUAIS
+// ============================================================
+function getNivelProbabilidade(percentual) {
+    if (percentual <= 15) return { nivel: 'Muito Baixo', cor: '🟢', classe: 'muito-baixo' };
+    if (percentual <= 34) return { nivel: 'Baixo', cor: '🟢', classe: 'baixo' };
+    if (percentual <= 54) return { nivel: 'Moderado', cor: '🟡', classe: 'moderado' };
+    if (percentual <= 74) return { nivel: 'Alto', cor: '🟠', classe: 'alto' };
+    if (percentual <= 100) return { nivel: 'Muito Alto', cor: '🔴', classe: 'muito-alto' };
     return { nivel: 'Crítico', cor: '🔴🔴', classe: 'critico' };
 }
 
@@ -96,79 +108,12 @@ function calcularRiscos(dados) {
     var solicitantePorte = solicitante.porte || 'MEDIO';
 
     // ============================================================
-    // 2. CÁLCULO DO SCORE GLOBAL (AMEAÇA)
+    // 2. CÁLCULO DO SCORE GLOBAL (AMEAÇA) - SOMA DOS 10 RISCOS
     // ============================================================
-    // Base: 50% (neutro)
-    var scoreGlobal = 50;
+    var scoreGlobal = 0;
 
-    // Fator 1: Porte do analisado (MEI/ME/EPP aumentam o risco)
-    var porteAnalisado = (analisadoPorte || 'MEDIO').toUpperCase().trim();
-    var portesRisco = {
-        'MEI': 15,
-        'ME': 12,
-        'EPP': 8,
-        'MEDIO': 5,
-        'GRANDE': 0,
-        'GIGANTE': -5
-    };
-    var fatorPorte = portesRisco[porteAnalisado] || 0;
-    scoreGlobal += fatorPorte;
-
-    // Fator 2: Relação de porte (solicitante vs analisado)
-    var ordemPorte = { 'MEI': 1, 'ME': 2, 'EPP': 3, 'MEDIO': 4, 'GRANDE': 5, 'GIGANTE': 5 };
-    var solPorte = ordemPorte[(solicitantePorte || 'MEDIO').toUpperCase().trim()] || 4;
-    var analPorte = ordemPorte[porteAnalisado] || 4;
-    if (solPorte < analPorte) {
-        scoreGlobal += 10; // Solicitante menor que analisado → maior risco para ele
-    } else if (analPorte < solPorte) {
-        scoreGlobal -= 5; // Analisado menor → risco menor para o solicitante
-    }
-
-    // Fator 3: Conhecimento e experiência
-    var conhecimento = relacionamento.conhecimento || 'razoavel';
-    var experiencia = relacionamento.experiencia || 'neutra';
-    if (conhecimento === 'nenhum') scoreGlobal += 10;
-    else if (conhecimento === 'pouco') scoreGlobal += 5;
-    else if (conhecimento === 'maisoumenos') scoreGlobal += 0;
-    else if (conhecimento === 'bem') scoreGlobal -= 5;
-
-    if (experiencia === 'negativa') scoreGlobal += 15;
-    else if (experiencia === 'neutra') scoreGlobal += 5;
-    else if (experiencia === 'positiva') scoreGlobal -= 5;
-    else if (experiencia === 'nenhuma') scoreGlobal += 5;
-
-    // Fator 4: Preocupação do usuário (aumenta o risco)
-    if (preocupacao) {
-        var preocupacoesPeso = {
-            'P01': 15, // não pagar
-            'P02': 12, // atraso
-            'P03': 10, // quebra de contrato
-            'P04': 20, // fraude
-            'P05': 8,  // qualidade
-            'P06': 8   // atraso na entrega
-        };
-        scoreGlobal += preocupacoesPeso[preocupacao] || 0;
-    }
-
-    // Fator 5: Situação cadastral irregular
-    var situacoesCriticas = [
-        'BAIXADA', 'SUSPENSA', 'INAPTA', 'INATIVA', 'CANCELADA',
-        'NULA', 'LIQUIDACAO', 'LIQUIDACAO JUDICIAL', 'RECUPERACAO JUDICIAL',
-        'INTERVENCAO', 'FALENCIA', 'INAPTIDAO'
-    ];
-    if (situacoesCriticas.indexOf(analisadoSituacao.toUpperCase().trim()) !== -1) {
-        scoreGlobal = 99; // Ameaça máxima
-    }
-
-    // Fator 6: Tempo de mercado (desconto para empresas antigas)
-    if (analisadoDataAbertura) {
-        var anos = ((new Date() - new Date(analisadoDataAbertura)) / (1000 * 60 * 60 * 24 * 365));
-        if (anos > 10) scoreGlobal -= 5;
-        else if (anos > 5) scoreGlobal -= 2;
-        else if (anos < 2) scoreGlobal += 8;
-    }
-
-    // Fator 7: Valor do negócio vs faturamento (comprometimento)
+    // Risco 1: Financeiro (baseado no comprometimento)
+    var contribFinanceiro = 0;
     var diasAnalisado = calcularDiasComprometimento(
         valorEfetivo,
         analisadoTipo,
@@ -176,9 +121,95 @@ function calcularRiscos(dados) {
         analisadoFaturamentoAnual,
         analisadoPorte
     );
-    if (diasAnalisado > 20) scoreGlobal += 15;
-    else if (diasAnalisado > 15) scoreGlobal += 10;
-    else if (diasAnalisado > 10) scoreGlobal += 5;
+    if (diasAnalisado > 20) contribFinanceiro = 30;
+    else if (diasAnalisado > 15) contribFinanceiro = 25;
+    else if (diasAnalisado > 10) contribFinanceiro = 20;
+    else if (diasAnalisado > 5) contribFinanceiro = 15;
+    else if (diasAnalisado > 1) contribFinanceiro = 8;
+    else contribFinanceiro = 3;
+    if (valorNegocio > 100000) contribFinanceiro += 5;
+    else if (valorNegocio > 50000) contribFinanceiro += 3;
+    scoreGlobal += contribFinanceiro;
+
+    // Risco 2: Risco entre as partes
+    var ordemPorte = { 'MEI': 1, 'ME': 2, 'EPP': 3, 'MEDIO': 4, 'GRANDE': 5, 'GIGANTE': 5 };
+    var solPorte = ordemPorte[(solicitantePorte || 'MEDIO').toUpperCase().trim()] || 4;
+    var analPorte = ordemPorte[(analisadoPorte || 'MEDIO').toUpperCase().trim()] || 4;
+    var contribPartes = 0;
+    if (solPorte < analPorte) contribPartes = 15;
+    else if (analPorte < solPorte) contribPartes = 5;
+    else contribPartes = 8;
+    var conhecimento = relacionamento.conhecimento || 'razoavel';
+    if (conhecimento === 'nenhum') contribPartes += 5;
+    else if (conhecimento === 'pouco') contribPartes += 3;
+    scoreGlobal += contribPartes;
+
+    // Risco 3: Descontinuidade
+    var contribDescontinuidade = 0;
+    if (analisadoDataAbertura) {
+        var anosMercado = ((new Date() - new Date(analisadoDataAbertura)) / (1000 * 60 * 60 * 24 * 365));
+        if (anosMercado < 2) contribDescontinuidade = 20;
+        else if (anosMercado < 5) contribDescontinuidade = 12;
+        else if (anosMercado < 10) contribDescontinuidade = 6;
+        else contribDescontinuidade = 3;
+    } else {
+        contribDescontinuidade = 10;
+    }
+    scoreGlobal += contribDescontinuidade;
+
+    // Risco 4: Integridade
+    var contribIntegridade = 0;
+    var situacoesCriticas = [
+        'BAIXADA', 'SUSPENSA', 'INAPTA', 'INATIVA', 'CANCELADA',
+        'NULA', 'LIQUIDACAO', 'LIQUIDACAO JUDICIAL', 'RECUPERACAO JUDICIAL',
+        'INTERVENCAO', 'FALENCIA', 'INAPTIDAO'
+    ];
+    if (situacoesCriticas.indexOf(analisadoSituacao.toUpperCase().trim()) !== -1) {
+        contribIntegridade = 25;
+    } else {
+        contribIntegridade = 5;
+    }
+    scoreGlobal += contribIntegridade;
+
+    // Risco 5: Reputacional (base estimada, será ajustada por evidências externas)
+    var contribReputacional = 8;
+    scoreGlobal += contribReputacional;
+
+    // Risco 6: Comportamental
+    var experiencia = relacionamento.experiencia || 'neutra';
+    var contribComportamental = 0;
+    if (experiencia === 'negativa') contribComportamental = 15;
+    else if (experiencia === 'neutra') contribComportamental = 8;
+    else if (experiencia === 'nenhuma') contribComportamental = 6;
+    else contribComportamental = 3;
+    scoreGlobal += contribComportamental;
+
+    // Risco 7: Resolutividade
+    var contribResolutividade = 5;
+    scoreGlobal += contribResolutividade;
+
+    // Risco 8: Deterioração
+    var contribDeterioracao = 4;
+    scoreGlobal += contribDeterioracao;
+
+    // Risco 9: Contratual
+    var contribContratual = 4;
+    scoreGlobal += contribContratual;
+
+    // Risco 10: Preocupação do usuário
+    var contribPreocupacao = 0;
+    if (preocupacao) {
+        var preocupacoesPeso = {
+            'P01': 10, // não pagar
+            'P02': 8,  // atraso
+            'P03': 6,  // quebra de contrato
+            'P04': 15, // fraude
+            'P05': 5,  // qualidade
+            'P06': 5   // atraso na entrega
+        };
+        contribPreocupacao = preocupacoesPeso[preocupacao] || 0;
+    }
+    scoreGlobal += contribPreocupacao;
 
     // Garantir que scoreGlobal fique entre 0 e 100
     scoreGlobal = Math.max(0, Math.min(100, Math.round(scoreGlobal)));
@@ -187,80 +218,21 @@ function calcularRiscos(dados) {
     var recuperabilidade = 100 - scoreGlobal;
 
     // ============================================================
-    // 3. CÁLCULO DOS RISCOS INDIVIDUAIS (CONTRIBUIÇÕES BRUTAS)
+    // 3. MONTAR LISTA DE RISCOS COM CONTRIBUIÇÕES BRUTAS
     // ============================================================
-    var riscos = [];
-
-    // Risco Financeiro
-    var contribFinanceiro = 0;
-    if (diasAnalisado > 20) contribFinanceiro = 90;
-    else if (diasAnalisado > 15) contribFinanceiro = 70;
-    else if (diasAnalisado > 10) contribFinanceiro = 50;
-    else if (diasAnalisado > 5) contribFinanceiro = 30;
-    else if (diasAnalisado > 1) contribFinanceiro = 15;
-    else contribFinanceiro = 5;
-    // Ajuste fino baseado no valor do negócio
-    if (valorNegocio > 100000) contribFinanceiro += 10;
-    else if (valorNegocio > 50000) contribFinanceiro += 5;
-    riscos.push({ risco: 'FINANCEIRO', contribuicao: contribFinanceiro, nivel: getNivelImpacto(diasAnalisado).nivel });
-
-    // Risco entre as partes
-    var contribPartes = 0;
-    if (solPorte < analPorte) contribPartes = 20;
-    else if (analPorte < solPorte) contribPartes = 5;
-    else contribPartes = 10;
-    // Ajuste por conhecimento
-    if (conhecimento === 'nenhum') contribPartes += 10;
-    else if (conhecimento === 'pouco') contribPartes += 5;
-    riscos.push({ risco: 'RISCO ENTRE AS PARTES', contribuicao: contribPartes, nivel: 'BAIXO' });
-
-    // Risco de Descontinuidade
-    var contribDescontinuidade = 0;
-    if (analisadoDataAbertura) {
-        var anosMercado = ((new Date() - new Date(analisadoDataAbertura)) / (1000 * 60 * 60 * 24 * 365));
-        if (anosMercado < 2) contribDescontinuidade = 40;
-        else if (anosMercado < 5) contribDescontinuidade = 25;
-        else if (anosMercado < 10) contribDescontinuidade = 10;
-        else contribDescontinuidade = 5;
-    } else {
-        contribDescontinuidade = 15;
-    }
-    riscos.push({ risco: 'DESCONTINUIDADE', contribuicao: contribDescontinuidade, nivel: 'BAIXO' });
-
-    // Risco de Integridade
-    var contribIntegridade = 0;
-    if (analisadoSituacao !== 'ATIVA' && analisadoSituacao !== '') {
-        contribIntegridade = 30;
-    } else {
-        contribIntegridade = 5;
-    }
-    riscos.push({ risco: 'INTEGRIDADE', contribuicao: contribIntegridade, nivel: 'BAIXO' });
-
-    // Risco Reputacional (baseado em evidências externas, mas estimado)
-    var contribReputacional = 10; // valor padrão, será ajustado pelo frontend com evidências
-    riscos.push({ risco: 'REPUTACIONAL', contribuicao: contribReputacional, nivel: 'BAIXO' });
-
-    // Risco Comportamental
-    var contribComportamental = 0;
-    if (experiencia === 'negativa') contribComportamental = 30;
-    else if (experiencia === 'neutra') contribComportamental = 15;
-    else if (experiencia === 'nenhuma') contribComportamental = 10;
-    else contribComportamental = 5;
-    riscos.push({ risco: 'COMPORTAMENTAL', contribuicao: contribComportamental, nivel: 'BAIXO' });
-
-    // Risco de Resolutividade
-    var contribResolutividade = 5;
-    riscos.push({ risco: 'RESOLUTIVIDADE', contribuicao: contribResolutividade, nivel: 'BAIXO' });
-
-    // Risco de Deterioração
-    var contribDeterioracao = 5;
-    riscos.push({ risco: 'DETERIORACAO', contribuicao: contribDeterioracao, nivel: 'BAIXO' });
-
-    // Risco Contratual (se houver contrato)
-    var contribContratual = 5;
-    riscos.push({ risco: 'CONTRATUAL', contribuicao: contribContratual, nivel: 'BAIXO' });
-
-    // ============================================================
+    var riscos = [
+        { risco: 'FINANCEIRO', contribuicao: contribFinanceiro },
+        { risco: 'RISCO ENTRE AS PARTES', contribuicao: contribPartes },
+        { risco: 'DESCONTINUIDADE', contribuicao: contribDescontinuidade },
+        { risco: 'INTEGRIDADE', contribuicao: contribIntegridade },
+        { risco: 'REPUTACIONAL', contribuicao: contribReputacional },
+        { risco: 'COMPORTAMENTAL', contribuicao: contribComportamental },
+        { risco: 'RESOLUTIVIDADE', contribuicao: contribResolutividade },
+        { risco: 'DETERIORACAO', contribuicao: contribDeterioracao },
+        { risco: 'CONTRATUAL', contribuicao: contribContratual },
+        { risco: 'PREOCUPACAO', contribuicao: contribPreocupacao }
+    ];
+// ============================================================
     // 4. NORMALIZAÇÃO DOS RISCOS (SOMA = SCORE_GLOBAL)
     // ============================================================
     var somaContrib = 0;
@@ -274,8 +246,7 @@ function calcularRiscos(dados) {
         return {
             risco: r.risco,
             contribuicao: r.contribuicao,
-            contribuicaoNormalizada: Math.round((r.contribuicao * fatorNormalizacao) * 10) / 10,
-            nivel: r.nivel
+            contribuicaoNormalizada: Math.round((r.contribuicao * fatorNormalizacao) * 10) / 10
         };
     });
 
@@ -291,17 +262,15 @@ function calcularRiscos(dados) {
     }
 
     // ============================================================
-    // 6. CÁLCULO DO NÍVEL DE IMPACTO DO RISCO FINANCEIRO NORMALIZADO
+    // 6. CLASSIFICAR O RISCO FINANCEIRO COM ESCALA GRANULAR
     // ============================================================
-    // Convertemos o percentual normalizado em dias aproximados
-    var diasFinanceiroNormalizado = Math.round((riscoFinanceiroNormalizado / 100) * 20 * 10) / 10; // 20 dias = 100%
-    var nivelFinanceiro = getNivelImpacto(diasFinanceiroNormalizado);
+    var nivelFinanceiro = getNivelProbabilidade(riscoFinanceiroNormalizado);
 
     // ============================================================
-    // 7. DEFINIÇÃO DA RECOMENDAÇÃO (USANDO DADOS NORMALIZADOS)
+    // 7. DEFINIÇÃO DA RECOMENDAÇÃO
     // ============================================================
     var recomendacao = 'SIGA';
-    if (scoreGlobal >= 55 || nivelFinanceiro.nivel === 'Crítico') {
+    if (scoreGlobal >= 55 || nivelFinanceiro.nivel === 'Alto' || nivelFinanceiro.nivel === 'Muito Alto' || nivelFinanceiro.nivel === 'Crítico') {
         recomendacao = 'PARE';
     } else if (scoreGlobal >= 35) {
         recomendacao = 'ATENCAO';
@@ -312,19 +281,17 @@ function calcularRiscos(dados) {
     // ============================================================
     // 8. TOP RISCOS (3 MAIORES + FINANCEIRO, ORDENADOS)
     // ============================================================
-    var topRiscos = [];
     var riscosSemFinanceiro = riscosNormalizados.filter(function(r) { return r.risco !== 'FINANCEIRO'; });
     riscosSemFinanceiro.sort(function(a, b) {
         return b.contribuicaoNormalizada - a.contribuicaoNormalizada;
     });
     var top3 = riscosSemFinanceiro.slice(0, 3);
-    topRiscos = top3.slice();
-    // Adiciona o financeiro se não estiver no top3
+    var topRiscos = top3.slice();
     var temFinanceiro = topRiscos.some(function(r) { return r.risco === 'FINANCEIRO'; });
     if (!temFinanceiro) {
-        topRiscos.push(riscosNormalizados.find(function(r) { return r.risco === 'FINANCEIRO'; }));
+        var financeiroObj = riscosNormalizados.find(function(r) { return r.risco === 'FINANCEIRO'; });
+        if (financeiroObj) topRiscos.push(financeiroObj);
     }
-    // Ordena os topRiscos por contribuicaoNormalizada decrescente
     topRiscos.sort(function(a, b) {
         return b.contribuicaoNormalizada - a.contribuicaoNormalizada;
     });
@@ -333,7 +300,7 @@ function calcularRiscos(dados) {
     // 9. IMPACTO PARA ANALISADO E SOLICITANTE (EM DIAS)
     // ============================================================
     var diasAnalisadoTotal = calcularDiasComprometimento(
-        valorNegocio, // usado o valor total, não a parcela, para comprometimento total
+        valorNegocio,
         analisadoTipo,
         analisadoRenda,
         analisadoFaturamentoAnual,
@@ -378,6 +345,7 @@ function calcularRiscos(dados) {
         top_riscos: topRiscos,
         risco_financeiro_normalizado: riscoFinanceiroNormalizado,
         risco_financeiro_nivel: nivelFinanceiro.nivel,
+        risco_financeiro_cor: nivelFinanceiro.cor,
         percentual_comprometimento: percentualComprometimento,
         dias_comprometimento: diasAnalisadoTotal,
         impacto_analisado: {
@@ -390,13 +358,12 @@ function calcularRiscos(dados) {
             nivel: impactoSolicitante.nivel,
             cor: impactoSolicitante.cor
         },
-        acao_protetiva: null, // será definido pelo frontend
+        acao_protetiva: null,
         situacao_irregular: situacoesCriticas.indexOf(analisadoSituacao.toUpperCase().trim()) !== -1,
-        // Metadados
         _meta: {
-            versao: '4.1.0',
+            versao: '4.2.0',
             timestamp: new Date().toISOString(),
-            porte_analisado: porteAnalisado,
+            porte_analisado: analisadoPorte,
             porte_solicitante: solicitantePorte,
             dias_analisado: diasAnalisadoTotal,
             dias_solicitante: diasSolicitante
@@ -409,5 +376,6 @@ function calcularRiscos(dados) {
 module.exports = {
     calcularRiscos,
     getNivelImpacto,
+    getNivelProbabilidade,
     calcularDiasComprometimento
 };

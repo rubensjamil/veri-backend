@@ -70,6 +70,12 @@ const CSV_FILE = 'cnpj_busca_6_colunas.csv';
 
 // ============================================================
 // BUSCA NO CSV DIRETAMENTE NO STORAGE
+// IMPORTANTE:
+// O CSV NÃO é consultado de forma preventiva.
+// Ele somente é chamado como FALLBACK depois que as fontes
+// anteriores de dados cadastrais falharem.
+//
+// A busca é feita diretamente no Google Cloud Storage.
 // ============================================================
 async function buscarCSVnoStorage(termo) {
     if (!storage) {
@@ -209,6 +215,15 @@ async function buscarCSVnoStorage(termo) {
                             return;
                         }
                     }
+
+                    /*
+                     * NÃO limitar a leitura arbitrariamente a 100.000 linhas.
+                     *
+                     * O arquivo possui dezenas de milhões de registros.
+                     * Como este método é FALLBACK, quando acionado ele precisa
+                     * poder continuar a leitura até encontrar o CNPJ ou chegar
+                     * ao final do arquivo, respeitando somente o timeout.
+                     */
                 })
                 .on('end', () => {
                     console.log(
@@ -1045,7 +1060,6 @@ async function buscarSiteOficial(nome) {
 
     return null;
 }
-
 async function buscarCNPJnaBrasilAPI(cnpj, tentativa) {
     var tentativaAtual = tentativa || 1;
     var maxTentativas = 2;
@@ -1361,6 +1375,7 @@ async function executarBuscas(queries, nome) {
 
     return resultados;
 }
+
 /*
  * ============================================================
  * COLETA PRINCIPAL DE EVIDÊNCIAS
@@ -1513,7 +1528,6 @@ async function coletarEvidenciasReais(
             }
         }
     }
-
 
     /*
      * ========================================================
@@ -1731,7 +1745,6 @@ async function coletarEvidenciasReais(
         }
     }
 
-
     /*
      * ========================================================
      * FALLBACK FINAL DE SEGURANÇA
@@ -1780,7 +1793,6 @@ async function coletarEvidenciasReais(
         );
     }
 
-
     /*
      * ========================================================
      * CPF
@@ -1803,7 +1815,6 @@ async function coletarEvidenciasReais(
         }
     }
 
-
     /*
      * ========================================================
      * PORTE UTILIZADO NAS BUSCAS
@@ -1825,7 +1836,6 @@ async function coletarEvidenciasReais(
         porteParaBusca
     );
 
-
     /*
      * ========================================================
      * GERAÇÃO DAS QUERIES
@@ -1839,7 +1849,6 @@ async function coletarEvidenciasReais(
         ufEncontrada,
         porteParaBusca
     );
-
 
     /*
      * ========================================================
@@ -1862,7 +1871,6 @@ async function coletarEvidenciasReais(
         siteOficial
     );
 
-
     /*
      * ========================================================
      * DEMAIS FONTES
@@ -1874,7 +1882,6 @@ async function coletarEvidenciasReais(
             queries,
             nome
         );
-
 
     /*
      * ========================================================
@@ -2005,7 +2012,6 @@ async function coletarEvidenciasReais(
         }
     };
 
-
     /*
      * ========================================================
      * FONTES
@@ -2032,7 +2038,6 @@ async function coletarEvidenciasReais(
             resultados.protestos || []
     };
 
-
     /*
      * ========================================================
      * SITE
@@ -2055,7 +2060,6 @@ async function coletarEvidenciasReais(
         };
     }
 
-
     /*
      * ========================================================
      * UF
@@ -2070,7 +2074,6 @@ async function coletarEvidenciasReais(
         dadosCadastrais.uf =
             ufEncontrada;
     }
-
 
     /*
      * ========================================================
@@ -2092,9 +2095,7 @@ async function coletarEvidenciasReais(
         '📤 FATURAMENTO FINAL:',
         faturamentoDoBanco
     );
-
-
-    /*
+/*
      * ========================================================
      * RESULTADO FINAL
      * ========================================================
@@ -2165,7 +2166,6 @@ async function coletarEvidenciasReais(
 
     return resultado;
 }
-
 
 /*
  * ============================================================
