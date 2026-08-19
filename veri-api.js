@@ -42,6 +42,7 @@
 // 🔧 CORRIGIDO: Adicionada função normalizarDocumento para compatibilidade
 // 🔧 CORRIGIDO: Substitui const tipoNegocio por var para evitar Assignment to constant variable
 // 🔧 CORRIGIDO: Validação de situação cadastral irregular (PARE automático)
+// 🔧 CORRIGIDO: Busca porte do solicitante via CNPJ para cálculo correto do impacto
 // ============================================
 
 const express = require("express");
@@ -645,6 +646,7 @@ async function buscarCNPJPorNome(nome) {
 
     return null;
 }
+
 async function buscarGoogleComAbort(query, timeoutMs) {
     var abort = criarAbortController(timeoutMs || TIMEOUTS.GOOGLE_SEARCH);
     try {
@@ -1015,6 +1017,14 @@ app.post("/enriquecer", async function(req, res) {
     const cnpjLimpo = normalizarCNPJ(cnpj);
     const preocupacaoId = (preocupacoes && preocupacoes.length > 0) ? preocupacoes[0] : null;
     var tipoNegocio = negocio ? negocio.split('_')[0] : 'analisar';
+
+    // Capturar dados do solicitante do corpo da requisição
+    var docSolicitante = req.body.solicitante?.documento || '';
+    var tipoSolicitante = req.body.solicitante?.tipo || 'empresa';
+    var rendaSolicitante = parseFloat(req.body.solicitante?.renda) || 0;
+    var emailSolicitante = req.body.solicitante?.email || '';
+    var whatsappSolicitante = req.body.solicitante?.whatsapp || '';
+    var razaoSocialSolicitante = req.body.solicitante?.razao_social || '';
 
     try {
         if (ENABLE_CACHE && cnpjLimpo && cacheMemoria.has(cnpjLimpo)) {
@@ -1395,6 +1405,30 @@ app.post("/enriquecer", async function(req, res) {
 
         const negocioStr = req.body.negocio ? String(req.body.negocio) : "";
 
+        // ============================================================
+        // 🔧 BUSCAR PORTE DO SOLICITANTE (SE EMPRESA E TIVER CNPJ)
+        // ============================================================
+        var solicitantePorte = (req.body.analisante && req.body.analisante.porte) || "MEDIO";
+        var solicitanteFaturamentoAnual = (req.body.analisante && req.body.analisante.faturamento_anual) || null;
+
+        if (docSolicitante && docSolicitante.length === 14 && tipoSolicitante === 'empresa') {
+            try {
+                console.log('🔍 Buscando porte do solicitante para CNPJ:', docSolicitante);
+                var dadosSol = await cadeiaDeBuscaCNPJ(docSolicitante);
+                if (dadosSol) {
+                    if (dadosSol.porte) {
+                        solicitantePorte = dadosSol.porte;
+                        console.log('✅ Porte do solicitante obtido:', solicitantePorte);
+                    }
+                    if (dadosSol.faturamento_anual) {
+                        solicitanteFaturamentoAnual = dadosSol.faturamento_anual;
+                    }
+                }
+            } catch (err) {
+                console.warn('⚠️ Erro ao buscar porte do solicitante:', err.message);
+            }
+        }
+
         const dadosMotor = {
             analisado: {
                 cnpj: cnpjLimpo,
@@ -1410,12 +1444,12 @@ app.post("/enriquecer", async function(req, res) {
                 whatsapp: whatsapp_analisado || ""
             },
             solicitante: {
-                porte: (req.body.analisante && req.body.analisante.porte) || "MEDIO",
-                tipo: (req.body.analisante && req.body.analisante.tipo) || "empresa",
+                porte: solicitantePorte,
+                tipo: tipoSolicitante || "empresa",
                 renda: renda_solicitante || 0,
                 email: email_solicitante || "",
                 whatsapp: whatsapp_solicitante || "",
-                faturamento_anual: (req.body.analisante && req.body.analisante.faturamento_anual) || null
+                faturamento_anual: solicitanteFaturamentoAnual
             },
             relacionamento: {
                 conhecimento: req.body.conhecimento || "razoavel",
