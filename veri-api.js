@@ -1546,43 +1546,50 @@ app.post("/enriquecer", async function(req, res) {
             .digest("hex")
             .substring(0, 16);
 
-        const response = {
-            status: "sucesso",
-            dados: dadosCombinados,
-            scores: scores,
-            motor: resultadoMotor,
-            dados_cadastrais: dadosCadastrais,
-            site_encontrado: dadosOrquestrador.site_encontrado || null,
-            cnpj_encontrado: dadosOrquestrador.cnpj_encontrado || null,
-            cpf_encontrado: dadosOrquestrador.cpf_encontrado || null,
-            uf_encontrada: dadosCadastrais.uf || null,
-            evidencias: evidenciasFinal,
-            acao_protetiva: acaoProtetiva,
-            auditoria: {
-                hash: hashAuditoria,
-                hash_input: hashInput,
-                hash_output: hashAuditoria,
-                cnpj: cnpjLimpo || "sem_cnpj",
-                timestamp: new Date().toISOString(),
-                tempo_execucao_ms: Date.now() - inicio,
-                versao_api: VERSAO_API,
-                versao_orquestrador: VERSAO_ORQUESTRADOR,
-                versao_prompt_gemini: VERSAO_PROMPT_GEMINI,
-                versao_schema: VERSAO_SCHEMA,
-                versao_motor: VERSAO_MOTOR,
-                metodologia: config.METODOLOGIA_VERSAO || "VERI 3.2",
-                fontes_utilizadas: dadosOrquestrador.fontes_utilizadas || [],
-                faturamento_fonte: dadosCadastrais.faturamento_fonte || "nao_informado"
-            },
-            meta: {
-                tempo_ms: Date.now() - inicio,
-                fonte: "orquestrador+gemini+motor",
-                gemini_retornou: geminiRetornouDados,
-                evidencias_fallback_usadas: (!geminiRetornouDados || evidenciasGemini.length === 0),
-                preocupacao: preocupacaoId,
-                tipo_negocio: tipoNegocio
-            }
-        };
+       const response = {
+    status: "sucesso",
+    dados: dadosCombinados,
+    scores: scores,
+    motor: resultadoMotor,
+    dados_cadastrais: dadosCadastrais,
+    site_encontrado: dadosOrquestrador.site_encontrado || null,
+    cnpj_encontrado: dadosOrquestrador.cnpj_encontrado || null,
+    cpf_encontrado: dadosOrquestrador.cpf_encontrado || null,
+    uf_encontrada: dadosCadastrais.uf || null,
+    evidencias: evidenciasFinal,
+    acao_protetiva: acaoProtetiva,
+    // 🔧 Adicionar dados do solicitante para o frontend
+    solicitante: {
+        porte: solicitantePorte || 'MEDIO',
+        faturamento_anual: solicitanteFaturamentoAnual || null,
+        renda: solicitanteRenda || 0,
+        tipo: tipoSolicitante || 'empresa'
+    },
+    auditoria: {
+        hash: hashAuditoria,
+        hash_input: hashInput,
+        hash_output: hashAuditoria,
+        cnpj: cnpjLimpo || "sem_cnpj",
+        timestamp: new Date().toISOString(),
+        tempo_execucao_ms: Date.now() - inicio,
+        versao_api: VERSAO_API,
+        versao_orquestrador: VERSAO_ORQUESTRADOR,
+        versao_prompt_gemini: VERSAO_PROMPT_GEMINI,
+        versao_schema: VERSAO_SCHEMA,
+        versao_motor: VERSAO_MOTOR,
+        metodologia: config.METODOLOGIA_VERSAO || "VERI 3.2",
+        fontes_utilizadas: dadosOrquestrador.fontes_utilizadas || [],
+        faturamento_fonte: dadosCadastrais.faturamento_fonte || "nao_informado"
+    },
+    meta: {
+        tempo_ms: Date.now() - inicio,
+        fonte: "orquestrador+gemini+motor",
+        gemini_retornou: geminiRetornouDados,
+        evidencias_fallback_usadas: (!geminiRetornouDados || evidenciasGemini.length === 0),
+        preocupacao: preocupacaoId,
+        tipo_negocio: tipoNegocio
+    }
+};
 
         if (cnpjLimpo) {
             if (ENABLE_CACHE) {
