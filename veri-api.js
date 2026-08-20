@@ -1,48 +1,9 @@
 // ============================================
 // VERI API - Motor Transversal v3.2
 // Versão completa com todas as rotas
-// CORRIGIDO: Busca BrasilAPI no /enriquecer
-// CORRIGIDO: Passa faturamento_anual para o motor
-// ADAPTADO: Valor da Contratação/Compra/Venda
-// ADAPTADO: Extração de UF para o orchestrator
-// CORRIGIDO: Logs para diagnóstico da BrasilAPI
-// CORRIGIDO: Fallback para ReceitaWS
-// CORRIGIDO: Captura de valor com logs
-// CORRIGIDO: Dotenv para leitura de .env
-// CORRIGIDO: Removida duplicação da variável 'secoes'
-// CORRIGIDO: Fluxo de validação nunca bloqueia
-// CORRIGIDO: Substituído optional chaining (?.) por compatibilidade
-// CORRIGIDO: Erro "negocioStr.startsWith is not a function"
-// CORRIGIDO: Garantia que req.body.negocio seja string
-// CORRIGIDO: Suporte a CNPJs alfanuméricos
-// CORRIGIDO: Busca por nome no banco local e no CSV
-// CORRIGIDO: Lógica de busca com 3 fontes (BrasilAPI -> ReceitaWS -> CSV)
-// CORRIGIDO: Indexação em memória do CSV para busca instantânea
-// CORRIGIDO: Extração de sócio majoritário e controladora
-// CORRIGIDO: Todas as strings com crases e sintaxe 100% verificada
-// CORRIGIDO: carregarCSVIndex com verificação de existência do arquivo (fs.existsSync)
-// CORRIGIDO: carregarCSVIndex não derruba o servidor em caso de erro
-// CORRIGIDO: baixarCSVdoStorage() ativada na inicialização
-// CORRIGIDO: Suporte a credenciais via variável de ambiente (GOOGLE_APPLICATION_CREDENTIALS_JSON)
-// CORRIGIDO: Caminho do Secret File atualizado para google-creds.json
-// CORRIGIDO: Erro de sintaxe na linha 291 (crases no console.log)
-// CORRIGIDO: Busca no Storage para razão social e fallback de CNPJ
-// CORRIGIDO: DEMAIS substituído por GIGANTE em todos os lugares
-// CORRIGIDO: Prioriza faturamento do banco regional (orquestrador) ACIMA de qualquer estimativa
-// CORRIGIDO: Porte GIGANTE prevalece sobre qualquer outro porte vindo de APIs
-// CORRIGIDO: Remove site fictício (não exibe "www.nome.com.br" quando não encontrado)
-// CORRIGIDO: Adiciona dias_comprometimento no retorno do Motor
-// CORRIGIDO: Busca CNPJ no banco regional (cnpjs_famosos.json) antes da BrasilAPI
-// CORRIGIDO: Removida evidência de comprometimento do backend (frontend calcula)
-// CORRIGIDO: Fallback de faturamento com nomes por extenso (MICRO EMPRESA, etc.)
-// 🔧 CORRIGIDO: Retorna acao_protetiva no /enriquecer
-// 🔧 CORRIGIDO: Passa preocupacao para o motor
-// 🔧 CORRIGIDO: Ação protetiva para PARE é "Venda à vista ou com entrada significativa e cobre juros e multas sobre atrasos."
-// 🔧 CORRIGIDO: Rota /teste-cnpj sempre retorna 200 com encontrado: false para evitar erro no frontend
-// 🔧 CORRIGIDO: Adicionada função normalizarDocumento para compatibilidade
-// 🔧 CORRIGIDO: Substitui const tipoNegocio por var para evitar Assignment to constant variable
-// 🔧 CORRIGIDO: Validação de situação cadastral irregular (PARE automático)
-// 🔧 CORRIGIDO: Busca porte do solicitante via CNPJ para cálculo correto do impacto
+// CORRIGIDO: Prioriza porte, faturamento e renda enviados pelo frontend
+// CORRIGIDO: Calcula faturamento_anual a partir do mensal se fornecido
+// CORRIGIDO: Preserva data_abertura para GIGANTES via orchestrator
 // ============================================
 
 const express = require("express");
@@ -52,8 +13,6 @@ const fs = require("fs");
 const { Storage } = require("@google-cloud/storage");
 const csv = require("csv-parser");
 const crypto = require("crypto");
-
-// require('dotenv').config();
 
 // ============================================================
 // CONFIGURA CREDENCIAIS DO GOOGLE CLOUD
@@ -113,7 +72,7 @@ if (!credenciaisCarregadas) {
 }
 
 // ============================================================
-// 🔧 CORREÇÃO: Verificação das Chaves de API (Google Search)
+// VERIFICAÇÃO DAS CHAVES DE API
 // ============================================================
 if (!process.env.GOOGLE_API_KEY) {
     console.warn('⚠️ GOOGLE_API_KEY não encontrada. O Google Search não funcionará.');
@@ -208,7 +167,7 @@ let csvIndexCarregado = false;
 const CSV_PATH = path.join(__dirname, 'dados-abertos-zip', 'cnpj_busca_6_colunas.csv');
 
 // ============================================================
-// NORMALIZAR CNPJ/CPF - SUPORTE A ALFANUMÉRICOS
+// NORMALIZAR CNPJ/CPF
 // ============================================================
 function normalizarCNPJ(doc) {
     if (!doc) return '';
@@ -767,7 +726,6 @@ async function cadeiaDeBuscaCNPJ(limpo) {
 // ============================================
 app.get("/", function(req, res) { res.json({ status: "VERI API Online", versao: VERSAO_API }); });
 
-// 🔧 CORREÇÃO: Rota /teste-cnpj agora retorna 200 com encontrado: false
 app.get("/teste-cnpj/:cnpj", async function(req, res) {
     try {
         const limpo = normalizarCNPJ(req.params.cnpj);
@@ -778,7 +736,6 @@ app.get("/teste-cnpj/:cnpj", async function(req, res) {
         if (resultado) {
             return res.json({ ...resultado, encontrado: true });
         }
-        // Retorna 200 com encontrado: false para não gerar erro no frontend
         return res.json({
             cnpj: limpo,
             encontrado: false,
@@ -898,7 +855,7 @@ app.post("/analisar", async function(req, res) {
 });
 
 // ============================================================
-// FUNÇÃO: GERAR EVIDÊNCIAS DE FALLBACK (CORRIGIDA)
+// FUNÇÃO: GERAR EVIDÊNCIAS DE FALLBACK
 // ============================================================
 function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMotor) {
     var evidencias = [];
@@ -994,7 +951,7 @@ function gerarEvidenciasFallback(dadosCadastrais, dadosFormulario, resultadoMoto
     return evidencias;
 }
 // ============================================================
-// ROTA /enriquecer – CORRIGIDA (COM AÇÃO PROTETIVA E SITUAÇÃO IRREGULAR)
+// ROTA /enriquecer – CORRIGIDA (COM PRIORIZAÇÃO DE CAMPOS EXTRAS)
 // ============================================================
 app.post("/enriquecer", async function(req, res) {
     const inicio = Date.now();
@@ -1018,13 +975,25 @@ app.post("/enriquecer", async function(req, res) {
     const preocupacaoId = (preocupacoes && preocupacoes.length > 0) ? preocupacoes[0] : null;
     var tipoNegocio = negocio ? negocio.split('_')[0] : 'analisar';
 
-    // Capturar dados do solicitante do corpo da requisição
+    // Capturar dados do solicitante e analisado do corpo da requisição
     var docSolicitante = req.body.solicitante?.documento || '';
     var tipoSolicitante = req.body.solicitante?.tipo || 'empresa';
     var rendaSolicitante = parseFloat(req.body.solicitante?.renda) || 0;
     var emailSolicitante = req.body.solicitante?.email || '';
     var whatsappSolicitante = req.body.solicitante?.whatsapp || '';
     var razaoSocialSolicitante = req.body.solicitante?.razao_social || '';
+    // Campos extras do solicitante
+    var porteSolicitanteExtra = req.body.solicitante?.porte || '';
+    var faturamentoMensalSolicitanteExtra = req.body.solicitante?.faturamento_anual 
+        ? (req.body.solicitante.faturamento_anual / 12) 
+        : null;
+
+    // Campos extras do analisado
+    var porteAnalisadoExtra = req.body.analisado?.porte || '';
+    var faturamentoMensalAnalisadoExtra = req.body.analisado?.faturamento_anual 
+        ? (req.body.analisado.faturamento_anual / 12) 
+        : null;
+    var rendaAnalisadoExtra = req.body.analisado?.renda || 0;
 
     try {
         if (ENABLE_CACHE && cnpjLimpo && cacheMemoria.has(cnpjLimpo)) {
@@ -1099,6 +1068,7 @@ app.post("/enriquecer", async function(req, res) {
             }
         }
 
+        // Priorizar faturamento do banco regional
         if (faturamentoBancoRegional) {
             dadosCadastraisCompletos.faturamento_anual = faturamentoBancoRegional;
             dadosCadastraisCompletos.setor = setorBancoRegional || dadosCadastraisCompletos.setor;
@@ -1176,6 +1146,49 @@ app.post("/enriquecer", async function(req, res) {
             whatsapp_solicitante: whatsapp_solicitante || ""
         };
 
+        // 🔧 PRIORIZAR CAMPOS EXTRAS DO FRONTEND (se fornecidos)
+        // Analisado
+        if (porteAnalisadoExtra) {
+            dadosCadastrais.porte = porteAnalisadoExtra;
+            console.log('✅ Porte do analisado (extra):', porteAnalisadoExtra);
+        }
+        if (faturamentoMensalAnalisadoExtra) {
+            dadosCadastrais.faturamento_anual = faturamentoMensalAnalisadoExtra * 12;
+            dadosCadastrais.faturamento_fonte = 'extra_mensal';
+            console.log('✅ Faturamento do analisado (extra):', faturamentoMensalAnalisadoExtra);
+        }
+        if (rendaAnalisadoExtra) {
+            dadosCadastrais.renda = rendaAnalisadoExtra;
+            console.log('✅ Renda do analisado (extra):', rendaAnalisadoExtra);
+        }
+
+        // Solicitante (usado no motor e no relatório)
+        var solicitantePorte = porteSolicitanteExtra || 'MEDIO';
+        var solicitanteFaturamentoAnual = faturamentoMensalSolicitanteExtra ? faturamentoMensalSolicitanteExtra * 12 : null;
+        var solicitanteRenda = rendaSolicitante || 0;
+
+        // Se o solicitante forneceu CNPJ, tentar buscar dados complementares
+        if (docSolicitante && docSolicitante.length === 14 && tipoSolicitante === 'empresa') {
+            if (!solicitanteFaturamentoAnual || !solicitantePorte || solicitantePorte === 'MEDIO') {
+                try {
+                    console.log('🔍 Buscando dados complementares do solicitante para CNPJ:', docSolicitante);
+                    var dadosSol = await cadeiaDeBuscaCNPJ(docSolicitante);
+                    if (dadosSol) {
+                        if (!solicitantePorte || solicitantePorte === 'MEDIO') {
+                            solicitantePorte = dadosSol.porte || 'MEDIO';
+                            console.log('✅ Porte do solicitante obtido:', solicitantePorte);
+                        }
+                        if (!solicitanteFaturamentoAnual && dadosSol.faturamento_anual) {
+                            solicitanteFaturamentoAnual = dadosSol.faturamento_anual;
+                            console.log('✅ Faturamento do solicitante obtido:', solicitanteFaturamentoAnual);
+                        }
+                    }
+                } catch (err) {
+                    console.warn('⚠️ Erro ao buscar dados do solicitante:', err.message);
+                }
+            }
+        }
+
         var faturamentoAnualEncontrado = null;
         var faturamentoFonte = "";
 
@@ -1251,7 +1264,7 @@ app.post("/enriquecer", async function(req, res) {
         }
 
         // ============================================================
-        // 🔧 VALIDAÇÃO DE SITUAÇÃO CADASTRAL IRREGULAR
+        // VALIDAÇÃO DE SITUAÇÃO CADASTRAL IRREGULAR
         // ============================================================
         var situacoesCriticas = [
             'BAIXADA', 'SUSPENSA', 'INAPTA', 'INATIVA', 'CANCELADA',
@@ -1405,30 +1418,7 @@ app.post("/enriquecer", async function(req, res) {
 
         const negocioStr = req.body.negocio ? String(req.body.negocio) : "";
 
-        // ============================================================
-        // 🔧 BUSCAR PORTE DO SOLICITANTE (SE EMPRESA E TIVER CNPJ)
-        // ============================================================
-        var solicitantePorte = (req.body.analisante && req.body.analisante.porte) || "MEDIO";
-        var solicitanteFaturamentoAnual = (req.body.analisante && req.body.analisante.faturamento_anual) || null;
-
-        if (docSolicitante && docSolicitante.length === 14 && tipoSolicitante === 'empresa') {
-            try {
-                console.log('🔍 Buscando porte do solicitante para CNPJ:', docSolicitante);
-                var dadosSol = await cadeiaDeBuscaCNPJ(docSolicitante);
-                if (dadosSol) {
-                    if (dadosSol.porte) {
-                        solicitantePorte = dadosSol.porte;
-                        console.log('✅ Porte do solicitante obtido:', solicitantePorte);
-                    }
-                    if (dadosSol.faturamento_anual) {
-                        solicitanteFaturamentoAnual = dadosSol.faturamento_anual;
-                    }
-                }
-            } catch (err) {
-                console.warn('⚠️ Erro ao buscar porte do solicitante:', err.message);
-            }
-        }
-
+        // 🔧 MONTAGEM DO dadosMotor COM PRIORIZAÇÃO DE CAMPOS EXTRAS
         const dadosMotor = {
             analisado: {
                 cnpj: cnpjLimpo,
@@ -1437,19 +1427,19 @@ app.post("/enriquecer", async function(req, res) {
                 situacao: dadosCadastrais.situacao || "ATIVA",
                 data_abertura: dadosCadastrais.data_abertura || "",
                 tipo: req.body.analisado_tipo || "empresa",
-                renda: renda_analisado || 0,
+                renda: rendaAnalisadoExtra || renda_analisado || 0,
                 faturamento_anual: dadosCadastrais.faturamento_anual || null,
                 uf: dadosCadastrais.uf || "",
                 email: email_analisado || "",
                 whatsapp: whatsapp_analisado || ""
             },
             solicitante: {
-                porte: solicitantePorte,
+                porte: solicitantePorte || "MEDIO",
                 tipo: tipoSolicitante || "empresa",
-                renda: renda_solicitante || 0,
+                renda: solicitanteRenda || 0,
                 email: email_solicitante || "",
                 whatsapp: whatsapp_solicitante || "",
-                faturamento_anual: solicitanteFaturamentoAnual
+                faturamento_anual: solicitanteFaturamentoAnual || null
             },
             relacionamento: {
                 conhecimento: req.body.conhecimento || "razoavel",
@@ -1507,7 +1497,7 @@ app.post("/enriquecer", async function(req, res) {
             };
             var dadosAnalisado = {
                 tipo: req.body.analisado_tipo || "empresa",
-                renda: renda_analisado || 0,
+                renda: rendaAnalisadoExtra || renda_analisado || 0,
                 porte: dadosCadastrais.porte || "MEDIO",
                 data_abertura: dadosCadastrais.data_abertura || "",
                 situacao: dadosCadastrais.situacao || "ATIVA",
