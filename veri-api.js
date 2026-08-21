@@ -975,20 +975,22 @@ app.post("/enriquecer", async function(req, res) {
     const preocupacaoId = (preocupacoes && preocupacoes.length > 0) ? preocupacoes[0] : null;
     var tipoNegocio = negocio ? negocio.split('_')[0] : 'analisar';
 
-    // Capturar dados do solicitante e analisado do corpo da requisição
+    // ============================================================
+    // CAPTURA DE CAMPOS EXTRAS DO SOLICITANTE E ANALISADO
+    // (Priorização de dados enviados pelo frontend)
+    // ============================================================
     var docSolicitante = req.body.solicitante?.documento || '';
     var tipoSolicitante = req.body.solicitante?.tipo || 'empresa';
     var rendaSolicitante = parseFloat(req.body.solicitante?.renda) || 0;
     var emailSolicitante = req.body.solicitante?.email || '';
     var whatsappSolicitante = req.body.solicitante?.whatsapp || '';
     var razaoSocialSolicitante = req.body.solicitante?.razao_social || '';
-    // Campos extras do solicitante
+    
     var porteSolicitanteExtra = req.body.solicitante?.porte || '';
     var faturamentoMensalSolicitanteExtra = req.body.solicitante?.faturamento_anual 
         ? (req.body.solicitante.faturamento_anual / 12) 
         : null;
 
-    // Campos extras do analisado
     var porteAnalisadoExtra = req.body.analisado?.porte || '';
     var faturamentoMensalAnalisadoExtra = req.body.analisado?.faturamento_anual 
         ? (req.body.analisado.faturamento_anual / 12) 
@@ -1068,7 +1070,6 @@ app.post("/enriquecer", async function(req, res) {
             }
         }
 
-        // Priorizar faturamento do banco regional
         if (faturamentoBancoRegional) {
             dadosCadastraisCompletos.faturamento_anual = faturamentoBancoRegional;
             dadosCadastraisCompletos.setor = setorBancoRegional || dadosCadastraisCompletos.setor;
@@ -1146,49 +1147,6 @@ app.post("/enriquecer", async function(req, res) {
             whatsapp_solicitante: whatsapp_solicitante || ""
         };
 
-        // 🔧 PRIORIZAR CAMPOS EXTRAS DO FRONTEND (se fornecidos)
-        // Analisado
-        if (porteAnalisadoExtra) {
-            dadosCadastrais.porte = porteAnalisadoExtra;
-            console.log('✅ Porte do analisado (extra):', porteAnalisadoExtra);
-        }
-        if (faturamentoMensalAnalisadoExtra) {
-            dadosCadastrais.faturamento_anual = faturamentoMensalAnalisadoExtra * 12;
-            dadosCadastrais.faturamento_fonte = 'extra_mensal';
-            console.log('✅ Faturamento do analisado (extra):', faturamentoMensalAnalisadoExtra);
-        }
-        if (rendaAnalisadoExtra) {
-            dadosCadastrais.renda = rendaAnalisadoExtra;
-            console.log('✅ Renda do analisado (extra):', rendaAnalisadoExtra);
-        }
-
-        // Solicitante (usado no motor e no relatório)
-        var solicitantePorte = porteSolicitanteExtra || 'MEDIO';
-        var solicitanteFaturamentoAnual = faturamentoMensalSolicitanteExtra ? faturamentoMensalSolicitanteExtra * 12 : null;
-        var solicitanteRenda = rendaSolicitante || 0;
-
-        // Se o solicitante forneceu CNPJ, tentar buscar dados complementares
-        if (docSolicitante && docSolicitante.length === 14 && tipoSolicitante === 'empresa') {
-            if (!solicitanteFaturamentoAnual || !solicitantePorte || solicitantePorte === 'MEDIO') {
-                try {
-                    console.log('🔍 Buscando dados complementares do solicitante para CNPJ:', docSolicitante);
-                    var dadosSol = await cadeiaDeBuscaCNPJ(docSolicitante);
-                    if (dadosSol) {
-                        if (!solicitantePorte || solicitantePorte === 'MEDIO') {
-                            solicitantePorte = dadosSol.porte || 'MEDIO';
-                            console.log('✅ Porte do solicitante obtido:', solicitantePorte);
-                        }
-                        if (!solicitanteFaturamentoAnual && dadosSol.faturamento_anual) {
-                            solicitanteFaturamentoAnual = dadosSol.faturamento_anual;
-                            console.log('✅ Faturamento do solicitante obtido:', solicitanteFaturamentoAnual);
-                        }
-                    }
-                } catch (err) {
-                    console.warn('⚠️ Erro ao buscar dados do solicitante:', err.message);
-                }
-            }
-        }
-
         var faturamentoAnualEncontrado = null;
         var faturamentoFonte = "";
 
@@ -1264,7 +1222,7 @@ app.post("/enriquecer", async function(req, res) {
         }
 
         // ============================================================
-        // VALIDAÇÃO DE SITUAÇÃO CADASTRAL IRREGULAR
+        // 🔧 VALIDAÇÃO DE SITUAÇÃO CADASTRAL IRREGULAR
         // ============================================================
         var situacoesCriticas = [
             'BAIXADA', 'SUSPENSA', 'INAPTA', 'INATIVA', 'CANCELADA',
@@ -1418,28 +1376,42 @@ app.post("/enriquecer", async function(req, res) {
 
         const negocioStr = req.body.negocio ? String(req.body.negocio) : "";
 
-        // 🔧 MONTAGEM DO dadosMotor COM PRIORIZAÇÃO DE CAMPOS EXTRAS
+        // ============================================================
+        // MONTAGEM DO dadosMotor COM PRIORIZAÇÃO DE CAMPOS EXTRAS
+        // ============================================================
+        var solicitantePorte = porteSolicitanteExtra || req.body.analisante?.porte || "MEDIO";
+        var solicitanteFaturamentoAnual = faturamentoMensalSolicitanteExtra 
+            ? faturamentoMensalSolicitanteExtra * 12 
+            : req.body.analisante?.faturamento_anual || null;
+        var solicitanteRenda = rendaSolicitante || 0;
+
+        var analisadoPorte = porteAnalisadoExtra || dadosCadastrais.porte || "MEDIO";
+        var analisadoFaturamentoAnual = faturamentoMensalAnalisadoExtra 
+            ? faturamentoMensalAnalisadoExtra * 12 
+            : dadosCadastrais.faturamento_anual || null;
+        var analisadoRenda = rendaAnalisadoExtra || renda_analisado || 0;
+
         const dadosMotor = {
             analisado: {
                 cnpj: cnpjLimpo,
                 razao_social: dadosCadastrais.razao_social || nome,
-                porte: dadosCadastrais.porte || "MEDIO",
+                porte: analisadoPorte,
                 situacao: dadosCadastrais.situacao || "ATIVA",
                 data_abertura: dadosCadastrais.data_abertura || "",
                 tipo: req.body.analisado_tipo || "empresa",
-                renda: rendaAnalisadoExtra || renda_analisado || 0,
-                faturamento_anual: dadosCadastrais.faturamento_anual || null,
+                renda: analisadoRenda,
+                faturamento_anual: analisadoFaturamentoAnual,
                 uf: dadosCadastrais.uf || "",
                 email: email_analisado || "",
                 whatsapp: whatsapp_analisado || ""
             },
             solicitante: {
-                porte: solicitantePorte || "MEDIO",
+                porte: solicitantePorte,
                 tipo: tipoSolicitante || "empresa",
-                renda: solicitanteRenda || 0,
+                renda: solicitanteRenda,
                 email: email_solicitante || "",
                 whatsapp: whatsapp_solicitante || "",
-                faturamento_anual: solicitanteFaturamentoAnual || null
+                faturamento_anual: solicitanteFaturamentoAnual
             },
             relacionamento: {
                 conhecimento: req.body.conhecimento || "razoavel",
@@ -1456,9 +1428,14 @@ app.post("/enriquecer", async function(req, res) {
             subsecao: negocioStr.split("_")[1] || "fornecedor",
             preocupacao: preocupacaoId
         };
-
+// ============================================================
+        // CHAMADA DO MOTOR VERI
+        // ============================================================
         const resultadoMotor = calcularRiscos(dadosMotor);
 
+        // ============================================================
+        // AÇÕES PROTETIVAS
+        // ============================================================
         var acaoProtetiva = ACAO_PADRAO;
 
         if (resultadoMotor.recomendacao === 'PARE') {
@@ -1467,6 +1444,9 @@ app.post("/enriquecer", async function(req, res) {
             acaoProtetiva = ACOES_PROTETIVAS[preocupacaoId][tipoNegocio] || ACOES_PROTETIVAS[preocupacaoId]['analisar'] || ACAO_PADRAO;
         }
 
+        // ============================================================
+        // EVIDÊNCIAS DO GEMINI
+        // ============================================================
         var evidenciasGemini = [];
         if (estruturado && estruturado.dados_estruturados) {
             secoes.forEach(function(secao) {
@@ -1485,20 +1465,23 @@ app.post("/enriquecer", async function(req, res) {
         var geminiRetornouDados = estruturado && estruturado.status_busca === "sucesso";
         var evidenciasFinal = evidenciasGemini || [];
 
+        // ============================================================
+        // FALLBACK DE EVIDÊNCIAS SE GEMINI NÃO RETORNOU DADOS
+        // ============================================================
         if (!geminiRetornouDados || evidenciasGemini.length === 0) {
             var dadosFormulario = {
                 valor: valorNegocio,
                 parcelas: parcelasNegocio,
                 tipo_pagamento: tipoPagamento,
-                porte_solicitante: (req.body.analisante && req.body.analisante.porte) || "MEDIO",
+                porte_solicitante: solicitantePorte,
                 preocupacoes: req.body.preocupacoes || [],
                 conhecimento: req.body.conhecimento,
                 experiencia: req.body.experiencia
             };
             var dadosAnalisado = {
                 tipo: req.body.analisado_tipo || "empresa",
-                renda: rendaAnalisadoExtra || renda_analisado || 0,
-                porte: dadosCadastrais.porte || "MEDIO",
+                renda: analisadoRenda,
+                porte: analisadoPorte,
                 data_abertura: dadosCadastrais.data_abertura || "",
                 situacao: dadosCadastrais.situacao || "ATIVA",
                 setor: dadosCadastrais.setor || "",
@@ -1508,6 +1491,9 @@ app.post("/enriquecer", async function(req, res) {
             evidenciasFinal = evidenciasFinal.concat(evidenciasFallback);
         }
 
+        // ============================================================
+        // MONTAGEM DA RESPOSTA FINAL
+        // ============================================================
         const dadosCombinados = {
             ...estruturado,
             dados_estruturados: {
@@ -1535,6 +1521,9 @@ app.post("/enriquecer", async function(req, res) {
             motor: resultadoMotor
         };
 
+        // ============================================================
+        // HASH DE AUDITORIA
+        // ============================================================
         const hashAuditoria = crypto
             .createHash("sha256")
             .update(JSON.stringify(dadosCombinados))
@@ -1546,51 +1535,57 @@ app.post("/enriquecer", async function(req, res) {
             .digest("hex")
             .substring(0, 16);
 
-       const response = {
-    status: "sucesso",
-    dados: dadosCombinados,
-    scores: scores,
-    motor: resultadoMotor,
-    dados_cadastrais: dadosCadastrais,
-    site_encontrado: dadosOrquestrador.site_encontrado || null,
-    cnpj_encontrado: dadosOrquestrador.cnpj_encontrado || null,
-    cpf_encontrado: dadosOrquestrador.cpf_encontrado || null,
-    uf_encontrada: dadosCadastrais.uf || null,
-    evidencias: evidenciasFinal,
-    acao_protetiva: acaoProtetiva,
-    // 🔧 Adicionar dados do solicitante para o frontend
-    solicitante: {
-        porte: solicitantePorte || 'MEDIO',
-        faturamento_anual: solicitanteFaturamentoAnual || null,
-        renda: solicitanteRenda || 0,
-        tipo: tipoSolicitante || 'empresa'
-    },
-    auditoria: {
-        hash: hashAuditoria,
-        hash_input: hashInput,
-        hash_output: hashAuditoria,
-        cnpj: cnpjLimpo || "sem_cnpj",
-        timestamp: new Date().toISOString(),
-        tempo_execucao_ms: Date.now() - inicio,
-        versao_api: VERSAO_API,
-        versao_orquestrador: VERSAO_ORQUESTRADOR,
-        versao_prompt_gemini: VERSAO_PROMPT_GEMINI,
-        versao_schema: VERSAO_SCHEMA,
-        versao_motor: VERSAO_MOTOR,
-        metodologia: config.METODOLOGIA_VERSAO || "VERI 3.2",
-        fontes_utilizadas: dadosOrquestrador.fontes_utilizadas || [],
-        faturamento_fonte: dadosCadastrais.faturamento_fonte || "nao_informado"
-    },
-    meta: {
-        tempo_ms: Date.now() - inicio,
-        fonte: "orquestrador+gemini+motor",
-        gemini_retornou: geminiRetornouDados,
-        evidencias_fallback_usadas: (!geminiRetornouDados || evidenciasGemini.length === 0),
-        preocupacao: preocupacaoId,
-        tipo_negocio: tipoNegocio
-    }
-};
+        // ============================================================
+        // RESPOSTA FINAL PARA O FRONTEND
+        // ============================================================
+        const response = {
+            status: "sucesso",
+            dados: dadosCombinados,
+            scores: scores,
+            motor: resultadoMotor,
+            dados_cadastrais: dadosCadastrais,
+            site_encontrado: dadosOrquestrador.site_encontrado || null,
+            cnpj_encontrado: dadosOrquestrador.cnpj_encontrado || null,
+            cpf_encontrado: dadosOrquestrador.cpf_encontrado || null,
+            uf_encontrada: dadosCadastrais.uf || null,
+            evidencias: evidenciasFinal,
+            acao_protetiva: acaoProtetiva,
+            // 🔧 DADOS DO SOLICITANTE PARA O FRONTEND
+            solicitante: {
+                porte: solicitantePorte,
+                faturamento_anual: solicitanteFaturamentoAnual,
+                renda: solicitanteRenda,
+                tipo: tipoSolicitante
+            },
+            auditoria: {
+                hash: hashAuditoria,
+                hash_input: hashInput,
+                hash_output: hashAuditoria,
+                cnpj: cnpjLimpo || "sem_cnpj",
+                timestamp: new Date().toISOString(),
+                tempo_execucao_ms: Date.now() - inicio,
+                versao_api: VERSAO_API,
+                versao_orquestrador: VERSAO_ORQUESTRADOR,
+                versao_prompt_gemini: VERSAO_PROMPT_GEMINI,
+                versao_schema: VERSAO_SCHEMA,
+                versao_motor: VERSAO_MOTOR,
+                metodologia: config.METODOLOGIA_VERSAO || "VERI 3.2",
+                fontes_utilizadas: dadosOrquestrador.fontes_utilizadas || [],
+                faturamento_fonte: dadosCadastrais.faturamento_fonte || "nao_informado"
+            },
+            meta: {
+                tempo_ms: Date.now() - inicio,
+                fonte: "orquestrador+gemini+motor",
+                gemini_retornou: geminiRetornouDados,
+                evidencias_fallback_usadas: (!geminiRetornouDados || evidenciasGemini.length === 0),
+                preocupacao: preocupacaoId,
+                tipo_negocio: tipoNegocio
+            }
+        };
 
+        // ============================================================
+        // SALVAR EM CACHE
+        // ============================================================
         if (cnpjLimpo) {
             if (ENABLE_CACHE) {
                 setCacheMemoria(cnpjLimpo, response);
@@ -1613,6 +1608,7 @@ app.post("/enriquecer", async function(req, res) {
         });
     }
 });
+
 // ============================================
 // INICIA O SERVIDOR
 // ============================================
