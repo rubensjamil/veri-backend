@@ -4,6 +4,8 @@
 // CORRIGIDO: Prioriza porte, faturamento e renda enviados pelo frontend
 // CORRIGIDO: Calcula faturamento_anual a partir do mensal se fornecido
 // CORRIGIDO: Preserva data_abertura para GIGANTES via orchestrator
+// CORRIGIDO: Fallback em cascata: BrasilAPI → Base VERI (68M) → ReceitaWS
+// CORRIGIDO: Extração de sócio majoritário e controladora do QSA
 // ============================================
 
 const express = require("express");
@@ -327,7 +329,7 @@ async function carregarCSVIndex() {
 }
 
 // ============================================
-// BUSCA NO CSV DIRETAMENTE NO STORAGE (NOVO)
+// BUSCA NO CSV DIRETAMENTE NO STORAGE (BASE PRÓPRIA - 68M CNPJs)
 // ============================================
 async function buscarCSVnoStorage(termo) {
     if (!storage) {
@@ -345,7 +347,7 @@ async function buscarCSVnoStorage(termo) {
             return null;
         }
         
-        console.log('🔍 Buscando no Storage por:', termo);
+        console.log('🔍 Buscando na base própria (Storage) por:', termo);
         
         const stream = file.createReadStream();
         
@@ -374,7 +376,7 @@ async function buscarCSVnoStorage(termo) {
                                 situacao: row["SITUACAO"] || row.situacao || "ATIVA",
                                 uf: row.UF || "",
                                 municipio: row.MUNICIPIO || "",
-                                fonte: "csv_storage"
+                                fonte: "base_propria"
                             };
                             clearTimeout(timeoutId);
                             stream.destroy();
@@ -398,7 +400,7 @@ async function buscarCSVnoStorage(termo) {
                                 situacao: row["SITUACAO"] || row.situacao || "ATIVA",
                                 uf: row.UF || "",
                                 municipio: row.MUNICIPIO || "",
-                                fonte: "csv_storage"
+                                fonte: "base_propria"
                             };
                             clearTimeout(timeoutId);
                             stream.destroy();
@@ -424,7 +426,7 @@ async function buscarCSVnoStorage(termo) {
                 });
         });
     } catch (err) {
-        console.warn('⚠️ Erro ao buscar no CSV:', err.message);
+        console.warn('⚠️ Erro ao buscar na base própria:', err.message);
         return null;
     }
 }
@@ -447,7 +449,7 @@ const FONTES_UTILIZADAS = [
     'Busca de CNPJ por nome',
     'Protestos (Centroprot)',
     'Banco local de CNPJs famosos',
-    'CSV Storage (fallback)'
+    'Base VERI (CSV Storage)'
 ];
 
 const TIMEOUTS = {
@@ -654,7 +656,8 @@ async function buscarCNPJnaBrasilAPI(cnpj, tentativa) {
                 email: data.email || "",
                 site: data.site || "",
                 uf: data.uf || "",
-                municipio: data.municipio || ""
+                municipio: data.municipio || "",
+                qsa: data.qsa || []
             };
         }
     } catch (err) {
@@ -700,24 +703,75 @@ async function buscarCNPJnaReceitaWS(cnpj) {
     return null;
 }
 
+// ============================================================
+// FUNÇÃO PARA EXTRAIR SÓCIO MAJORITÁRIO E CONTROLADORA DO QSA
+// ============================================================
+function extrairSocios(qsa) {
+    if (!qsa || !Array.isArray(qsa) || qsa.length === 0) {
+        return { socioMajoritario: null, controladora: null };
+    }
+    var socioMajoritario = null;
+    var controladora = null;
+    var maiorPercentual = 0;
+    for (var i = 0; i < qsa.length; i++) {
+        var socio = qsa[i];
+        var percentual = parseFloat(socio.percentual_socio || socio.percentual) || 0;
+        if (percentual > maiorPercentual) {
+            maiorPercentual = percentual;
+            socioMajoritario = {
+                nome: socio.nome_socio || socio.nome || '',
+                percentual: percentual,
+                qualificacao: socio.qualificacao_socio || socio.qualificacao || '',
+                cpf: socio.cpf_socio || socio.cnpj_socio || ''
+            };
+        }
+        if (percentual > 50 && (socio.cnpj_socio || socio.cnpj)) {
+            controladora = {
+                nome: socio.nome_socio || socio.nome || '',
+                cnpj: socio.cnpj_socio || socio.cnpj || '',
+                percentual: percentual
+            };
+        }
+    }
+    return { socioMajoritario, controladora };
+}
+
+// ============================================================
+// CADEIA DE FALLBACK: BrasilAPI → Base VERI → ReceitaWS → Contrato (futuro)
+// ============================================================
 async function cadeiaDeBuscaCNPJ(limpo) {
     var cnpjNormalizado = normalizarDocumento(limpo);
     console.log('🔍 Iniciando cadeia de busca para CNPJ: ' + cnpjNormalizado);
-    
+
+    // 1. BrasilAPI (gratuita, rápida)
     var brasil = await buscarCNPJnaBrasilAPI(cnpjNormalizado);
     if (brasil) {
         try { await carregarHistorico(); await salvarNoHistorico(cnpjNormalizado, brasil); } catch(e) {}
         return { ...brasil, fonte: "brasilapi" };
     }
-    
-    console.warn('⚠️ BrasilAPI falhou, tentando ReceitaWS...');
+    console.warn('⚠️ BrasilAPI falhou, tentando base própria...');
+
+    // 2. Base VERI (Google Cloud Storage - 68M CNPJs)
+    var basePropria = await buscarCSVnoStorage(cnpjNormalizado);
+    if (basePropria) {
+        try { await carregarHistorico(); await salvarNoHistorico(cnpjNormalizado, basePropria); } catch(e) {}
+        return { ...basePropria, fonte: "base_propria" };
+    }
+    console.warn('⚠️ Base própria não encontrou o CNPJ, tentando ReceitaWS...');
+
+    // 3. ReceitaWS (gratuita, fallback secundário)
     var receita = await buscarCNPJnaReceitaWS(cnpjNormalizado);
     if (receita) {
         try { await carregarHistorico(); await salvarNoHistorico(cnpjNormalizado, receita); } catch(e) {}
         return { ...receita, fonte: "receitaws" };
     }
-    
-    console.warn('⚠️ Todas as APIs falharam para CNPJ: ' + cnpjNormalizado);
+
+    // 4. Contrato pago da Receita (futuro / plano Premium)
+    // TODO: quando ativar o contrato
+    // var contrato = await buscarCNPJnoContrato(cnpjNormalizado);
+    // if (contrato) return { ...contrato, fonte: "contrato_receita" };
+
+    console.warn('⚠️ Todas as fontes falharam para CNPJ: ' + cnpjNormalizado);
     return null;
 }
 
@@ -793,6 +847,7 @@ app.post("/analisar", async function(req, res) {
                     dados.analisado.situacao = complemento.situacao;
                     dados.analisado.site = complemento.site || dados.analisado.site;
                     dados.analisado.uf = complemento.uf || dados.analisado.uf;
+                    dados.analisado.qsa = complemento.qsa || [];
                 }
             }
         }
@@ -1059,14 +1114,18 @@ app.post("/enriquecer", async function(req, res) {
                         uf: resultadoBusca.uf || "",
                         municipio: resultadoBusca.municipio || "",
                         fonte: resultadoBusca.fonte || "desconhecida",
-                        socio_majoritario: resultadoBusca.socio_majoritario || null,
-                        controladora: resultadoBusca.controladora || null,
                         qsa: resultadoBusca.qsa || []
                     };
-                    console.log("✅ Dados cadastrais obtidos via BrasilAPI para CNPJ:", cnpjLimpo);
+                    // Extrair sócio majoritário e controladora do QSA
+                    if (resultadoBusca.qsa) {
+                        var socios = extrairSocios(resultadoBusca.qsa);
+                        dadosCadastraisCompletos.socio_majoritario = socios.socioMajoritario;
+                        dadosCadastraisCompletos.controladora = socios.controladora;
+                    }
+                    console.log("✅ Dados cadastrais obtidos para CNPJ:", cnpjLimpo);
                 }
             } catch (err) {
-                console.warn("⚠️ Erro ao buscar dados cadastrais via BrasilAPI:", err.message);
+                console.warn("⚠️ Erro ao buscar dados cadastrais:", err.message);
             }
         }
 
@@ -1403,7 +1462,9 @@ app.post("/enriquecer", async function(req, res) {
                 faturamento_anual: analisadoFaturamentoAnual,
                 uf: dadosCadastrais.uf || "",
                 email: email_analisado || "",
-                whatsapp: whatsapp_analisado || ""
+                whatsapp: whatsapp_analisado || "",
+                socio_majoritario: dadosCadastrais.socio_majoritario || null,
+                controladora: dadosCadastrais.controladora || null
             },
             solicitante: {
                 porte: solicitantePorte,
@@ -1416,6 +1477,7 @@ app.post("/enriquecer", async function(req, res) {
             relacionamento: {
                 conhecimento: req.body.conhecimento || "razoavel",
                 experiencia: req.body.experiencia || "neutra",
+                recomendacao: req.body.recomendacao || "nao",
                 meses: 0,
                 ticket_medio: req.body.ticket_medio || 0
             },
@@ -1476,7 +1538,8 @@ app.post("/enriquecer", async function(req, res) {
                 porte_solicitante: solicitantePorte,
                 preocupacoes: req.body.preocupacoes || [],
                 conhecimento: req.body.conhecimento,
-                experiencia: req.body.experiencia
+                experiencia: req.body.experiencia,
+                recomendacao: req.body.recomendacao || 'nao'
             };
             var dadosAnalisado = {
                 tipo: req.body.analisado_tipo || "empresa",

@@ -4,8 +4,9 @@
 // CORRIGIDO: ticket para compra usa SOLICITANTE, venda usa ANALISADO
 // CORRIGIDO: topRiscos sempre inclui FINANCEIRO + 3 maiores
 // CORRIGIDO: percentual de comprometimento usa faturamento REAL
-// CORRIGIDO: RISCO ENTRE AS PARTES com fallback inteligente
-// CORRIGIDO: Adicionadas funções auxiliares getNivelImpacto, getNivelProbabilidade, calcularDiasComprometimento
+// CORRIGIDO: RISCO ENTRE AS PARTES com conhecimento, experiência e recomendação
+// CORRIGIDO: RISCO DE INTERRUPÇÃO (ex-DESCONTINUIDADE) com situação cadastral
+// CORRIGIDO: RISCO DE INTEGRIDADE com situação cadastral
 // ============================================================
 
 const config = require('../motor.config.js');
@@ -149,15 +150,28 @@ function calcularFinanceiro(dados) {
 function calcularDescontinuidade(dados) {
     const { analisado } = dados;
     const tempoMercado = calcularTempoMercado(analisado.data_abertura);
+    const situacao = (analisado.situacao || 'ATIVA').toUpperCase();
+
     const regras = metodologia.REGRAS.DESCONTINUIDADE;
     let descontinuidade = config.DEFAULTS.DESCONTINUIDADE;
 
+    // 1. Base pelo tempo de mercado
     if (tempoMercado < regras.LIMITES[0]) descontinuidade = regras.VALORES[0];
     else if (tempoMercado < regras.LIMITES[1]) descontinuidade = regras.VALORES[1];
     else if (tempoMercado < regras.LIMITES[2]) descontinuidade = regras.VALORES[2];
     else if (tempoMercado < regras.LIMITES[3]) descontinuidade = regras.VALORES[3];
     else if (tempoMercado < regras.LIMITES[4]) descontinuidade = regras.VALORES[4];
     else descontinuidade = regras.VALORES[5];
+
+    // 2. Ajuste pela situação cadastral
+    const situacoesCriticas = ['BAIXADA', 'SUSPENSA', 'INAPTA', 'INATIVA', 'CANCELADA', 'NULA', 'LIQUIDACAO', 'RECUPERACAO JUDICIAL', 'FALENCIA', 'INTERVENCAO'];
+    if (situacoesCriticas.indexOf(situacao) !== -1) {
+        descontinuidade = Math.min(100, descontinuidade + 40);
+    } else if (situacao === 'ATIVA') {
+        // mantém o valor base (sem ajuste)
+    } else {
+        descontinuidade = Math.min(100, descontinuidade + 10);
+    }
 
     return { pontuacao: descontinuidade, tempo_mercado_anos: tempoMercado };
 }
@@ -202,14 +216,26 @@ function calcularComportamental(dados) {
 function calcularIntegridade(dados) {
     const { analisado } = dados;
     const porteAnalisado = analisado.porte || '';
+    const situacao = (analisado.situacao || 'ATIVA').toUpperCase();
     const regras = metodologia.REGRAS.INTEGRIDADE;
     let integridade = config.DEFAULTS.INTEGRIDADE;
 
+    // Base pelo porte
     if (porteAnalisado === 'GRANDE' || porteAnalisado === 'DEMAIS') {
-        integridade = regras.GRANDE;
+        integridade = regras.GRANDE; // 0
     }
     if (!porteAnalisado) {
-        integridade = regras.DEFAULT;
+        integridade = regras.DEFAULT; // 50
+    }
+
+    // Ajuste pela situação cadastral
+    const situacoesCriticas = ['BAIXADA', 'SUSPENSA', 'INAPTA', 'INATIVA', 'CANCELADA', 'NULA', 'LIQUIDACAO', 'LIQUIDACAO JUDICIAL', 'RECUPERACAO JUDICIAL', 'FALENCIA', 'INTERVENCAO'];
+    if (situacoesCriticas.indexOf(situacao) !== -1) {
+        integridade = Math.min(100, integridade + 30);
+    } else if (situacao === 'ATIVA') {
+        // mantém o valor base
+    } else {
+        integridade = Math.min(100, integridade + 10);
     }
 
     return { pontuacao: integridade };
@@ -227,16 +253,50 @@ function calcularDeterioracao(dados) {
 }
 
 // ============================================================
-// CORREÇÃO: RISCO ENTRE AS PARTES com fallback inteligente
+// CORREÇÃO: RISCO ENTRE AS PARTES com fatores de relacionamento
 // ============================================================
+function aplicarFatoresRelacionais(base, relacionamento) {
+    if (!relacionamento) return base;
+
+    const conhecimento = relacionamento.conhecimento || 'razoavel';
+    const experiencia = relacionamento.experiencia || 'neutra';
+    const recomendacao = relacionamento.recomendacao || 'nao';
+
+    const fatoresConhecimento = {
+        'nenhum': 1.5,
+        'pouco': 1.3,
+        'razoavel': 1.0,
+        'bem': 0.7
+    };
+
+    const fatoresExperiencia = {
+        'negativa': 1.5,
+        'nenhuma': 1.2,
+        'neutra': 1.0,
+        'positiva': 0.7
+    };
+
+    const fatoresRecomendacao = {
+        'sim': 0.7,
+        'nao': 1.3
+    };
+
+    const fC = fatoresConhecimento[conhecimento] || 1.0;
+    const fE = fatoresExperiencia[experiencia] || 1.0;
+    const fR = fatoresRecomendacao[recomendacao] || 1.0;
+
+    let ajustado = base * fC * fE * fR;
+    ajustado = Math.max(0, Math.min(100, ajustado));
+
+    return ajustado;
+}
+
 function calcularRelacional(dados) {
-    const { analisado, solicitante } = dados;
-    
-    // Usa o porte real ou fallback
+    const { analisado, solicitante, relacionamento } = dados;
     let porteAnalisado = analisado.porte || '';
     let porteSolicitante = solicitante.porte || config.DEFAULTS.PORTE_SOLICITANTE;
 
-    // Se o analisado é PF, considera como porte 0
+    // Tratamento para PF
     if (analisado.tipo === 'pessoa') {
         const ordem = config.ORDEM_PORTE;
         const sol = ordem[porteSolicitante] || 3;
@@ -244,19 +304,17 @@ function calcularRelacional(dados) {
         const diferencaPorte = Math.abs(sol - anal);
         const regras = metodologia.REGRAS.RELACIONAL.DIFERENCA;
         let relacional = regras[diferencaPorte] || 80;
+        // Aplicar fatores de relacionamento
+        relacional = aplicarFatoresRelacionais(relacional, relacionamento);
         return { 
-            pontuacao: relacional, 
+            pontuacao: Math.round(relacional), 
             porte_solicitante: porteSolicitante, 
             porte_analisado: 'PESSOA_FISICA' 
         };
     }
 
-    // ============================================================
-    // CORREÇÃO: Se o porte do analisado for 'N/A' ou vazio,
-    // usa o porte do banco regional (via faturamento_anual)
-    // ============================================================
+    // Fallback para porte do analisado
     if (!porteAnalisado || porteAnalisado === 'N/A' || porteAnalisado === '') {
-        // Tenta inferir o porte pelo faturamento_anual
         if (analisado.faturamento_anual && analisado.faturamento_anual > 0) {
             const faturamento = analisado.faturamento_anual;
             if (faturamento <= 81000) porteAnalisado = 'MEI';
@@ -265,7 +323,6 @@ function calcularRelacional(dados) {
             else if (faturamento <= 12000000) porteAnalisado = 'MEDIO';
             else porteAnalisado = 'GRANDE';
         } else {
-            // Fallback: assume MEDIO
             porteAnalisado = 'MEDIO';
         }
     }
@@ -278,10 +335,12 @@ function calcularRelacional(dados) {
     const regras = metodologia.REGRAS.RELACIONAL.DIFERENCA;
     let relacional = regras[diferencaPorte] || 80;
 
-    // Ajuste adicional: se a diferença for grande (>= 3), aumenta o risco
     if (diferencaPorte >= 3) {
         relacional = Math.min(100, relacional * 1.2);
     }
+
+    // Aplicar fatores de relacionamento
+    relacional = aplicarFatoresRelacionais(relacional, relacionamento);
 
     return { 
         pontuacao: Math.round(relacional), 
@@ -371,7 +430,6 @@ function calcularDiasComprometimento(valor, tipo, renda, faturamentoAnual, porte
     }
     return 0;
 }
-
 // ============================================
 // FUNÇÃO PRINCIPAL: calcularRiscos
 // ============================================
@@ -406,7 +464,7 @@ function calcularRiscos(dados) {
             riscoCritico,
             { risco: 'FINANCEIRO', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
             { risco: 'RESOLUTIVIDADE', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
-            { risco: 'DESCONTINUIDADE', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
+            { risco: 'RISCO DE INTERRUPÇÃO', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
             { risco: 'VERACIDADE', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
             { risco: 'COMPORTAMENTAL', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
             { risco: 'INTEGRIDADE', pontuacao: 0, contribuicao: 0, nivel: 'BAIXO' },
@@ -483,7 +541,7 @@ function calcularRiscos(dados) {
     const fatores = [
         { nome: 'FINANCEIRO', pontuacao: financeiroResult.pontuacao, peso: metodologia.PESOS.FINANCEIRO },
         { nome: 'RESOLUTIVIDADE', pontuacao: resolutividade, peso: metodologia.PESOS.RESOLUTIVIDADE },
-        { nome: 'DESCONTINUIDADE', pontuacao: descontinuidadeResult.pontuacao, peso: metodologia.PESOS.DESCONTINUIDADE },
+        { nome: 'RISCO DE INTERRUPÇÃO', pontuacao: descontinuidadeResult.pontuacao, peso: metodologia.PESOS.DESCONTINUIDADE },
         { nome: 'VERACIDADE', pontuacao: veracidadeResult.pontuacao, peso: metodologia.PESOS.VERACIDADE },
         { nome: 'COMPORTAMENTAL', pontuacao: comportamentalResult.pontuacao, peso: metodologia.PESOS.COMPORTAMENTAL },
         { nome: 'INTEGRIDADE', pontuacao: integridadeResult.pontuacao, peso: metodologia.PESOS.INTEGRIDADE },
@@ -638,6 +696,6 @@ module.exports = {
     getNivelRisco,
     getNivelImpacto,
     getNivelProbabilidade,
-    calcularDiasComprometimento
+    calcularDiasComprometimento,
+    aplicarFatoresRelacionais
 };
-  
