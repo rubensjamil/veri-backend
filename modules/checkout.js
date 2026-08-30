@@ -50,6 +50,14 @@ router.post('/create-checkout-session', async (req, res) => {
         // Stripe Tax: ligado apenas se NÃO for Brasil e se a variável estiver ativa
         const taxEnabled = process.env.STRIPE_TAX_ENABLED === 'true' && !isBr;
 
+        // Constrói URLs com concatenação (sem crases)
+        var successUrl = success_url;
+        if (!successUrl) {
+            var origin = req.headers.origin || 'https://veri.app.br';
+            successUrl = origin + '/analise.html?pago=true&produto=' + produto;
+        }
+        var cancelUrl = cancel_url || req.headers.referer || req.headers.origin || 'https://veri.app.br';
+
         const sessionData = {
             payment_method_types: ['card', 'boleto', 'pix'],
             line_items: [{
@@ -64,8 +72,8 @@ router.post('/create-checkout-session', async (req, res) => {
                 quantity: 1,
             }],
             mode: 'payment',
-            success_url: success_url || (req.headers.origin || '') + '/analise.html?pago=true&produto=' + produto,
-            cancel_url: cancel_url || req.headers.referer || req.headers.origin,
+            success_url: successUrl,
+            cancel_url: cancelUrl,
             metadata: {
                 produto: produto,
                 country: country_code || 'BR',
@@ -120,20 +128,20 @@ router.post('/webhook/stripe', express.raw({ type: 'application/json' }), async 
         return res.status(400).json({ error: 'Assinatura inválida' });
     }
 
-    console.log(Webhook recebido: ${event.type});
+    console.log('Webhook recebido: ' + event.type);
 
     if (event.type === 'checkout.session.completed') {
         const session = event.data.object;
         const metadata = session.metadata || {};
         const produto = metadata.produto || 'negocios';
-        const customerEmail = session.customer_details?.email || '';
+        const customerEmail = session.customer_details ? session.customer_details.email : '';
         const amountTotal = (session.amount_total || 0) / 100;
 
-        console.log(`✅ Pagamento confirmado:
-            Produto: ${produto}
-            E-mail: ${customerEmail}
-            Valor: ${amountTotal} ${session.currency?.toUpperCase()}
-            ID: ${session.id}`);
+        console.log('✅ Pagamento confirmado:');
+        console.log('   Produto: ' + produto);
+        console.log('   E-mail: ' + customerEmail);
+        console.log('   Valor: ' + amountTotal + ' ' + (session.currency || '').toUpperCase());
+        console.log('   ID: ' + session.id);
 
         // ============================================================
         // AQUI VOCÊ INTEGRA COM O BANCO (REGISTRA A TRANSAÇÃO)
@@ -143,7 +151,6 @@ router.post('/webhook/stripe', express.raw({ type: 'application/json' }), async 
         // - Atualizar o saldo de análises do cliente
         // - Associar ao representante, se houver
 
-        // Se você tiver um banco, chame a função aqui.
         // await salvarTransacao(session);
     }
 
