@@ -1432,8 +1432,35 @@ app.post("/enriquecer", async function(req, res) {
             faturamentoMensal = calcularFaturamentoMensalPorPorte(porteEmpresa);
         }
 
-        const negocioStr = req.body.negocio ? String(req.body.negocio) : "";
+        // ============================================================
+// CORREÇÃO: negocioStr SEMPRE como string
+// ============================================================
+var negocioRaw = req.body.negocio;
+var negocioStr = "";
 
+if (negocioRaw !== null && negocioRaw !== undefined) {
+    if (typeof negocioRaw === 'string') {
+        negocioStr = negocioRaw;
+    } else if (typeof negocioRaw === 'object') {
+        // Se for objeto, tenta pegar .negocio ou .acao ou converte para JSON
+        if (negocioRaw.negocio) {
+            negocioStr = String(negocioRaw.negocio);
+        } else if (negocioRaw.acao) {
+            negocioStr = String(negocioRaw.acao);
+        } else {
+            negocioStr = JSON.stringify(negocioRaw);
+        }
+    } else {
+        negocioStr = String(negocioRaw);
+    }
+}
+
+// Se ainda assim ficar vazio, usa fallback
+if (!negocioStr || negocioStr === '') {
+    negocioStr = 'analisar_geral';
+}
+
+console.log('🔍 negocioStr final:', negocioStr);
         // ============================================================
         // TRATAMENTO DE PESSOA FÍSICA SEM CPF
         // ============================================================
