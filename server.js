@@ -49,7 +49,7 @@ app.get('/health', (req, res) => {
 // ============================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(🚀 VERI Server rodando na porta ${PORT});
-    console.log(📦 Rotas operacionais: /enriquecer, /teste-cnpj, /analisar);
-    console.log(💰 Rotas financeiras: /api/create-checkout-session, /api/webhook/stripe);
+    console.log('🚀 VERI Server rodando na porta ' + PORT);
+    console.log('📦 Rotas operacionais: /enriquecer, /teste-cnpj, /analisar');
+    console.log('💰 Rotas financeiras: /api/create-checkout-session, /api/webhook/stripe');
 });
