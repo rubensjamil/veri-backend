@@ -7,9 +7,10 @@
 // CORRIGIDO: RISCO ENTRE AS PARTES com conhecimento, experiência e recomendação
 // CORRIGIDO: RISCO DE INTERRUPÇÃO (ex-DESCONTINUIDADE) com situação cadastral
 // CORRIGIDO: RISCO DE INTEGRIDADE com situação cadastral
+// CORRIGIDO: caminho do motor.config.js para require('./motor.config.js')
 // ============================================================
 
-const config = require('../motor.config.js');
+const config = require('./motor.config.js');
 const metodologia = require('../motor.metodologia.js');
 
 // ============================================
@@ -430,6 +431,7 @@ function calcularDiasComprometimento(valor, tipo, renda, faturamentoAnual, porte
     }
     return 0;
 }
+
 // ============================================
 // FUNÇÃO PRINCIPAL: calcularRiscos
 // ============================================
