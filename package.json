@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@google-cloud/storage": "^7.0.0",
+    "@google/generative-ai": "^0.21.0",
     "axios": "^1.6.0",
     "cors": "^2.8.5",
     "csv-parser": "^3.0.0",
@@ -17,3 +18,13 @@
     "xml2js": "^0.6.0"
   }
 }
+
+
+
+
+
+
+
+
+
+
