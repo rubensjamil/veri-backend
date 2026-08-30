@@ -1116,7 +1116,6 @@ app.post("/enriquecer", async function(req, res) {
                         fonte: resultadoBusca.fonte || "desconhecida",
                         qsa: resultadoBusca.qsa || []
                     };
-                    // Extrair sócio majoritário e controladora do QSA
                     if (resultadoBusca.qsa) {
                         var socios = extrairSocios(resultadoBusca.qsa);
                         dadosCadastraisCompletos.socio_majoritario = socios.socioMajoritario;
@@ -1436,6 +1435,18 @@ app.post("/enriquecer", async function(req, res) {
         const negocioStr = req.body.negocio ? String(req.body.negocio) : "";
 
         // ============================================================
+        // TRATAMENTO DE PESSOA FÍSICA SEM CPF
+        // ============================================================
+        var tipoAnalisado = req.body.analisado_tipo || 'empresa';
+        if (tipoAnalisado === 'pessoa_fisica' || tipoAnalisado === 'pessoa') {
+            if (!cnpjLimpo || cnpjLimpo.length !== 11) {
+                // CPF não informado ou inválido: não bloqueia
+                console.log('ℹ️ CPF não informado para pessoa física. Usando apenas renda.');
+                cnpjLimpo = null; // não usar como documento
+            }
+        }
+
+        // ============================================================
         // MONTAGEM DO dadosMotor COM PRIORIZAÇÃO DE CAMPOS EXTRAS
         // ============================================================
         var solicitantePorte = porteSolicitanteExtra || req.body.analisante?.porte || "MEDIO";
@@ -1450,14 +1461,16 @@ app.post("/enriquecer", async function(req, res) {
             : dadosCadastrais.faturamento_anual || null;
         var analisadoRenda = rendaAnalisadoExtra || renda_analisado || 0;
 
+        var analisadoCnpj = cnpjLimpo || null;
+
         const dadosMotor = {
             analisado: {
-                cnpj: cnpjLimpo,
+                cnpj: analisadoCnpj,
                 razao_social: dadosCadastrais.razao_social || nome,
                 porte: analisadoPorte,
                 situacao: dadosCadastrais.situacao || "ATIVA",
                 data_abertura: dadosCadastrais.data_abertura || "",
-                tipo: req.body.analisado_tipo || "empresa",
+                tipo: tipoAnalisado || "empresa",
                 renda: analisadoRenda,
                 faturamento_anual: analisadoFaturamentoAnual,
                 uf: dadosCadastrais.uf || "",
@@ -1490,7 +1503,8 @@ app.post("/enriquecer", async function(req, res) {
             subsecao: negocioStr.split("_")[1] || "fornecedor",
             preocupacao: preocupacaoId
         };
-// ============================================================
+
+        // ============================================================
         // CHAMADA DO MOTOR VERI
         // ============================================================
         const resultadoMotor = calcularRiscos(dadosMotor);
@@ -1510,7 +1524,7 @@ app.post("/enriquecer", async function(req, res) {
         // EVIDÊNCIAS DO GEMINI
         // ============================================================
         var evidenciasGemini = [];
-        if (estruturado && estruturado.dados_estruturados) {
+        if (estruturado && estrutur ados.dados_estruturados) {
             secoes.forEach(function(secao) {
                 var dadosSecao = estruturado.dados_estruturados[secao];
                 if (dadosSecao) {
@@ -1613,7 +1627,6 @@ app.post("/enriquecer", async function(req, res) {
             uf_encontrada: dadosCadastrais.uf || null,
             evidencias: evidenciasFinal,
             acao_protetiva: acaoProtetiva,
-            // 🔧 DADOS DO SOLICITANTE PARA O FRONTEND
             solicitante: {
                 porte: solicitantePorte,
                 faturamento_anual: solicitanteFaturamentoAnual,
