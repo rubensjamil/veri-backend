@@ -1,25 +1,17 @@
 {
-  "name": "veri-api",
+  "name": "veri-backend",
   "version": "1.0.0",
-  "description": "API do Motor Transversal VERI - Google Cloud Run",
-  "main": "veri-api.js",
+  "description": "VERI API - Motor Transversal v3.2",
+  "main": "server.js",
   "scripts": {
-    "start": "node veri-api.js"
-  },
-  "engines": {
-    "node": "20.x"
+    "start": "node server.js"
   },
   "dependencies": {
-    "@google-cloud/storage": "^7.7.0",
-    "@google/genai": "^2.10.0",
-    "@google/generative-ai": "^0.24.1",
-    "ajv": "^8.20.0",
-    "axios": "^1.18.1",
+    "@google-cloud/storage": "^7.0.0",
     "cors": "^2.8.5",
     "csv-parser": "^3.0.0",
-    "dotenv": "^17.4.2",
+    "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "firebase-admin": "^14.1.0",
-    "xml2js": "^0.6.2"
+    "stripe": "^17.7.0"
   }
 }
