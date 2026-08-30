@@ -4,16 +4,10 @@
 const express = require('express');
 const cors = require('cors');
 
-// ============================================
-// CARREGA VARIÁVEIS DE AMBIENTE
-// ============================================
 require('dotenv').config();
 
 const app = express();
 
-// ============================================
-// CORS E JSON
-// ============================================
 app.use(cors({
     origin: "*",
     methods: ["GET", "POST", "OPTIONS"],
@@ -21,28 +15,17 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// ============================================
-// ROTAS OPERACIONAIS (VERI-API)
-// ============================================
 const veriApi = require('./veri-api');
 app.use('/', veriApi);
 
-// ============================================
-// ROTAS FINANCEIRAS (CHECKOUT)
-// ============================================
 const checkoutRouter = require('./modules/checkout');
 app.use('/api', checkoutRouter);
 
-// ============================================
-// HEALTH CHECK
-// ============================================
 app.get('/health', function(req, res) {
     var versao = '3.2.1';
     try {
         versao = require('./veri-api').VERSAO_API || '3.2.1';
-    } catch (e) {
-        // fallback
-    }
+    } catch (e) {}
     res.json({
         status: 'online',
         versao_api: versao,
@@ -50,9 +33,6 @@ app.get('/health', function(req, res) {
     });
 });
 
-// ============================================
-// INICIA O SERVIDOR
-// ============================================
 var PORT = process.env.PORT || 3000;
 app.listen(PORT, function() {
     console.log('🚀 VERI Server rodando na porta ' + PORT);
