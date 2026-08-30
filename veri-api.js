@@ -1524,7 +1524,7 @@ app.post("/enriquecer", async function(req, res) {
         // EVIDÊNCIAS DO GEMINI
         // ============================================================
         var evidenciasGemini = [];
-        if (estruturado && estrutur ados.dados_estruturados) {
+        if (estruturado && estruturados.dados_estruturados) {
             secoes.forEach(function(secao) {
                 var dadosSecao = estruturado.dados_estruturados[secao];
                 if (dadosSecao) {
