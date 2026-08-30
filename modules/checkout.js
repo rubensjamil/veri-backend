@@ -64,7 +64,7 @@ router.post('/create-checkout-session', async (req, res) => {
                 quantity: 1,
             }],
             mode: 'payment',
-            success_url: success_url || ${req.headers.origin}/analise.html?pago=true&produto=${produto},
+            success_url: success_url || (req.headers.origin || '') + '/analise.html?pago=true&produto=' + produto,
             cancel_url: cancel_url || req.headers.referer || req.headers.origin,
             metadata: {
                 produto: produto,
