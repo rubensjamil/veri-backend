@@ -7,11 +7,24 @@
 // CORRIGIDO: RISCO ENTRE AS PARTES com conhecimento, experiência e recomendação
 // CORRIGIDO: RISCO DE INTERRUPÇÃO (ex-DESCONTINUIDADE) com situação cadastral
 // CORRIGIDO: RISCO DE INTEGRIDADE com situação cadastral
-// CORRIGIDO: caminho do motor.config.js para require('./motor.config.js')
+// CORRIGIDO: caminho do motor.config.js e motor.metodologia.js com fallback
 // ============================================================
 
-const config = require('./motor.config.js');
-const metodologia = require('../motor.metodologia.js');
+let config, metodologia;
+
+try {
+    config = require('./motor.config.js');
+} catch (e) {
+    console.warn('⚠️ motor.config.js não encontrado em ./ , tentando na raiz...');
+    config = require('../../motor.config.js');
+}
+
+try {
+    metodologia = require('./motor.metodologia.js');
+} catch (e) {
+    console.warn('⚠️ motor.metodologia.js não encontrado em ./ , tentando na raiz...');
+    metodologia = require('../../motor.metodologia.js');
+}
 
 // ============================================
 // MAPEAMENTO DE PORTAS (INTERNO)
