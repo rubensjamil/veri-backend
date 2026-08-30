@@ -36,10 +36,16 @@ app.use('/api', checkoutRouter);
 // ============================================
 // HEALTH CHECK
 // ============================================
-app.get('/health', (req, res) => {
+app.get('/health', function(req, res) {
+    var versao = '3.2.1';
+    try {
+        versao = require('./veri-api').VERSAO_API || '3.2.1';
+    } catch (e) {
+        // fallback
+    }
     res.json({
         status: 'online',
-        versao_api: require('./veri-api').VERSAO_API || '3.2.1',
+        versao_api: versao,
         timestamp: new Date().toISOString()
     });
 });
@@ -47,8 +53,8 @@ app.get('/health', (req, res) => {
 // ============================================
 // INICIA O SERVIDOR
 // ============================================
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+var PORT = process.env.PORT || 3000;
+app.listen(PORT, function() {
     console.log('🚀 VERI Server rodando na porta ' + PORT);
     console.log('📦 Rotas operacionais: /enriquecer, /teste-cnpj, /analisar');
     console.log('💰 Rotas financeiras: /api/create-checkout-session, /api/webhook/stripe');
