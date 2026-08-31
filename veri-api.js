@@ -1552,7 +1552,7 @@ console.log('🔍 negocioStr final:', negocioStr);
         // EVIDÊNCIAS DO GEMINI
         // ============================================================
         var evidenciasGemini = [];
-        if (estruturado && estruturados.dados_estruturado) {
+        if (estruturado && estruturado.dados_estruturados) {
             secoes.forEach(function(secao) {
                 var dadosSecao = estruturado.dados_estruturados[secao];
                 if (dadosSecao) {
@@ -1566,7 +1566,7 @@ console.log('🔍 negocioStr final:', negocioStr);
             });
         }
 
-        var geminiRetornouDados = estruturado && estruturado.status_busca === "sucesso";
+        var geminiRetornouDados = estruturados && estruturado.status_busca === "sucesso";
         var evidenciasFinal = evidenciasGemini || [];
 
         // ============================================================
