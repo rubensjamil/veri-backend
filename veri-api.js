@@ -1297,7 +1297,7 @@ app.post("/enriquecer", async function(req, res) {
             var respostaIrregular = {
                 status: "sucesso",
                 dados: {
-                    dados_estruturados: {
+                    dados_estruturado: {
                         dados_cadastrais: dadosCadastrais,
                         situacao: dadosCadastrais.situacao,
                         porte: dadosCadastrais.porte
@@ -1355,7 +1355,7 @@ app.post("/enriquecer", async function(req, res) {
             console.warn('⚠️ Gemini retornou null. Criando estrutura mínima de emergência.');
             estruturado = {
                 status_busca: 'sucesso',
-                dados_estruturados: {
+                dados_estruturado: {
                     reputacional: {},
                     resolutividade: {},
                     comportamental: {},
@@ -1368,9 +1368,9 @@ app.post("/enriquecer", async function(req, res) {
             };
         }
 
-        if (!estruturado.dados_estruturados) {
-            console.warn('⚠️ dados_estruturados ausente. Criando estrutura padrão.');
-            estruturado.dados_estruturados = {
+        if (!estruturado.dados_estruturado) {
+            console.warn('⚠️ dados_estruturado ausente. Criando estrutura padrão.');
+            estruturado.dados_estruturado = {
                 reputacional: {},
                 resolutividade: {},
                 comportamental: {},
@@ -1381,8 +1381,8 @@ app.post("/enriquecer", async function(req, res) {
 
         const secoes = ['reputacional', 'resolutividade', 'comportamental', 'saude_financeira', 'red_flags'];
         for (let i = 0; i < secoes.length; i++) {
-            if (!estruturado.dados_estruturados[secoes[i]]) {
-                estruturado.dados_estruturados[secoes[i]] = {};
+            if (!estruturado.dados_estruturado[secoes[i]]) {
+                estruturado.dados_estruturado[secoes[i]] = {};
             }
         }
 
@@ -1412,7 +1412,7 @@ app.post("/enriquecer", async function(req, res) {
         const validacao = { valido: true, erros: [] };
         console.log('✅ Estrutura garantida com sucesso.');
 
-        const scores = extrairScores(estruturado.dados_estruturados || {});
+        const scores = extrairScores(estruturado.dados_estruturado || {});
 
         if (dadosCadastrais.data_abertura) {
             const dataAbertura = new Date(dadosCadastrais.data_abertura);
@@ -1552,9 +1552,9 @@ console.log('🔍 negocioStr final:', negocioStr);
         // EVIDÊNCIAS DO GEMINI
         // ============================================================
         var evidenciasGemini = [];
-        if (estruturado && estruturado.dados_estruturados) {
+        if (estruturado && estruturado.dados_estruturado) {
             secoes.forEach(function(secao) {
-                var dadosSecao = estruturado.dados_estruturados[secao];
+                var dadosSecao = estruturado.dados_estruturado[secao];
                 if (dadosSecao) {
                     Object.keys(dadosSecao).forEach(function(chave) {
                         var item = dadosSecao[chave];
@@ -1566,7 +1566,7 @@ console.log('🔍 negocioStr final:', negocioStr);
             });
         }
 
-        var geminiRetornouDados = estruturados && estruturado.status_busca === "sucesso";
+        var geminiRetornouDados = estruturado && estruturado.status_busca === "sucesso";
         var evidenciasFinal = evidenciasGemini || [];
 
         // ============================================================
@@ -1601,8 +1601,8 @@ console.log('🔍 negocioStr final:', negocioStr);
         // ============================================================
         const dadosCombinados = {
             ...estruturado,
-            dados_estruturados: {
-                ...estruturado.dados_estruturados,
+            dados_estruturado: {
+                ...estruturado.dados_estruturado,
                 dados_cadastrais: dadosCadastrais,
                 porte: dadosCadastrais.porte || null,
                 situacao: dadosCadastrais.situacao || null,
