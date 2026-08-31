@@ -16,7 +16,7 @@ try {
     config = require('./motor.config.js');
 } catch (e) {
     console.warn('⚠️ motor.config.js não encontrado em ./ , tentando na raiz...');
-    config = require('../../motor.config.js');
+    config = require('../../motor.config.js')
 }
 
 try {
@@ -450,6 +450,15 @@ function calcularDiasComprometimento(valor, tipo, renda, faturamentoAnual, porte
 // ============================================
 
 function calcularRiscos(dados) {
+    // ============================================================
+// CORREÇÃO: garantir que dados.negocio seja string
+// ============================================================
+if (dados.negocio === undefined || dados.negocio === null) {
+    dados.negocio = '';
+}
+if (typeof dados.negocio !== 'string') {
+    dados.negocio = String(dados.negocio);
+}
     const situacaoRaw = (dados.analisado && dados.analisado.situacao) ? dados.analisado.situacao.toUpperCase() : 'ATIVA';
 
     const palavrasCriticas = [

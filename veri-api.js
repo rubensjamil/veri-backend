@@ -1528,7 +1528,8 @@ console.log('🔍 negocioStr final:', negocioStr);
             },
             porta_entrada: negocioStr.split("_")[0] || "empresa",
             subsecao: negocioStr.split("_")[1] || "fornecedor",
-            preocupacao: preocupacaoId
+            preocupacao: preocupacaoId,
+            negocio: negocioStr
         };
 
         // ============================================================
