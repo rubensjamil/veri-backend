@@ -1552,7 +1552,7 @@ console.log('🔍 negocioStr final:', negocioStr);
         // EVIDÊNCIAS DO GEMINI
         // ============================================================
         var evidenciasGemini = [];
-        if (estruturado && estruturados.dados_estruturados) {
+        if (estruturado && estruturados.dados_estruturado) {
             secoes.forEach(function(secao) {
                 var dadosSecao = estruturado.dados_estruturados[secao];
                 if (dadosSecao) {
