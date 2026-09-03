@@ -7,7 +7,7 @@
 // CORRIGIDO: RISCO ENTRE AS PARTES com conhecimento, experiência e recomendação
 // CORRIGIDO: RISCO DE INTERRUPÇÃO (ex-DESCONTINUIDADE) com situação cadastral
 // CORRIGIDO: RISCO DE INTEGRIDADE com situação cadastral
-// CORRIGIDO: caminho do motor.config.js e motor.metodologia.js com fallback
+// CORRIGIDO: PESO FINANCEIRO = 8.5 (50% do score global)
 // ============================================================
 
 let config, metodologia;
@@ -61,30 +61,21 @@ function calcularFinanceiro(dados) {
     let ticketUsado = 0;
     let fonte = '';
 
-    // ============================================================
-    // CORREÇÃO: COMPRA usa SOLICITANTE, VENDA usa ANALISADO
-    // ============================================================
     if (isCompra) {
-        // Quem compra é o solicitante
         if (solicitante.tipo === 'pessoa' && solicitante.renda && solicitante.renda > 0) {
             ticketUsado = solicitante.renda / 30;
             fonte = 'renda_solicitante';
         } else if (solicitante.tipo === 'pessoa') {
-            // PF sem renda informada: usa fallback genérico (R$ 5.000/mês)
             ticketUsado = 5000 / 30;
             fonte = 'renda_pf_fallback';
         } else if (solicitante.tipo === 'empresa') {
             ticketUsado = calcularTicketDiario(solicitante.porte || 'MEDIO');
             fonte = 'porte_solicitante';
         } else {
-            // Fallback: ticket médio do relacionamento
             ticketUsado = relacionamento.ticket_medio || 5000;
             fonte = 'ticket_medio_fallback';
         }
     } else if (isVenda) {
-        // ============================================================
-        // CORREÇÃO: Para VENDA, usa o faturamento REAL do analisado
-        // ============================================================
         if (analisado.tipo === 'pessoa' && analisado.renda && analisado.renda > 0) {
             ticketUsado = analisado.renda / 30;
             fonte = 'renda_analisado';
@@ -92,12 +83,10 @@ function calcularFinanceiro(dados) {
             ticketUsado = 5000 / 30;
             fonte = 'renda_pf_fallback';
         } else if (analisado.tipo === 'empresa') {
-            // PRIORIDADE: faturamento_anual real (do banco regional)
             if (analisado.faturamento_anual && analisado.faturamento_anual > 0) {
                 ticketUsado = analisado.faturamento_anual / 12 / 30;
                 fonte = 'faturamento_real_analisado';
             } else {
-                // Fallback: porte do analisado
                 ticketUsado = calcularTicketDiario(analisado.porte || 'MEDIO');
                 fonte = 'porte_analisado';
             }
@@ -106,12 +95,10 @@ function calcularFinanceiro(dados) {
             fonte = 'ticket_medio_fallback';
         }
     } else {
-        // Caso não identificado (fallback geral)
         ticketUsado = calcularTicketDiario(analisado.porte || 'MEDIO');
         fonte = 'porte_analisado_fallback';
     }
 
-    // Garantia de ticket mínimo
     if (ticketUsado === 0) {
         ticketUsado = 1000;
         fonte = 'valor_padrao';
@@ -124,7 +111,6 @@ function calcularFinanceiro(dados) {
 
     let financeiro = config.DEFAULTS.FINANCEIRO;
     if (proporcaoRaw > 0) {
-        // Determina se a parte que paga é PF (para regras diferenciadas)
         const isPFParte = (isCompra && solicitante.tipo === 'pessoa') || (isVenda && analisado.tipo === 'pessoa');
 
         if (isPFParte) {
@@ -158,7 +144,7 @@ function calcularFinanceiro(dados) {
 }
 
 // ============================================
-// DEMAIS FUNÇÕES (MANTIDAS)
+// DEMAIS FUNÇÕES
 // ============================================
 
 function calcularDescontinuidade(dados) {
@@ -169,7 +155,6 @@ function calcularDescontinuidade(dados) {
     const regras = metodologia.REGRAS.DESCONTINUIDADE;
     let descontinuidade = config.DEFAULTS.DESCONTINUIDADE;
 
-    // 1. Base pelo tempo de mercado
     if (tempoMercado < regras.LIMITES[0]) descontinuidade = regras.VALORES[0];
     else if (tempoMercado < regras.LIMITES[1]) descontinuidade = regras.VALORES[1];
     else if (tempoMercado < regras.LIMITES[2]) descontinuidade = regras.VALORES[2];
@@ -177,12 +162,11 @@ function calcularDescontinuidade(dados) {
     else if (tempoMercado < regras.LIMITES[4]) descontinuidade = regras.VALORES[4];
     else descontinuidade = regras.VALORES[5];
 
-    // 2. Ajuste pela situação cadastral
     const situacoesCriticas = ['BAIXADA', 'SUSPENSA', 'INAPTA', 'INATIVA', 'CANCELADA', 'NULA', 'LIQUIDACAO', 'RECUPERACAO JUDICIAL', 'FALENCIA', 'INTERVENCAO'];
     if (situacoesCriticas.indexOf(situacao) !== -1) {
         descontinuidade = Math.min(100, descontinuidade + 40);
     } else if (situacao === 'ATIVA') {
-        // mantém o valor base (sem ajuste)
+        // mantém
     } else {
         descontinuidade = Math.min(100, descontinuidade + 10);
     }
@@ -234,20 +218,18 @@ function calcularIntegridade(dados) {
     const regras = metodologia.REGRAS.INTEGRIDADE;
     let integridade = config.DEFAULTS.INTEGRIDADE;
 
-    // Base pelo porte
     if (porteAnalisado === 'GRANDE' || porteAnalisado === 'DEMAIS') {
-        integridade = regras.GRANDE; // 0
+        integridade = regras.GRANDE;
     }
     if (!porteAnalisado) {
-        integridade = regras.DEFAULT; // 50
+        integridade = regras.DEFAULT;
     }
 
-    // Ajuste pela situação cadastral
     const situacoesCriticas = ['BAIXADA', 'SUSPENSA', 'INAPTA', 'INATIVA', 'CANCELADA', 'NULA', 'LIQUIDACAO', 'LIQUIDACAO JUDICIAL', 'RECUPERACAO JUDICIAL', 'FALENCIA', 'INTERVENCAO'];
     if (situacoesCriticas.indexOf(situacao) !== -1) {
         integridade = Math.min(100, integridade + 30);
     } else if (situacao === 'ATIVA') {
-        // mantém o valor base
+        // mantém
     } else {
         integridade = Math.min(100, integridade + 10);
     }
@@ -267,7 +249,7 @@ function calcularDeterioracao(dados) {
 }
 
 // ============================================================
-// CORREÇÃO: RISCO ENTRE AS PARTES com fatores de relacionamento
+// RISCO ENTRE AS PARTES
 // ============================================================
 function aplicarFatoresRelacionais(base, relacionamento) {
     if (!relacionamento) return base;
@@ -310,7 +292,6 @@ function calcularRelacional(dados) {
     let porteAnalisado = analisado.porte || '';
     let porteSolicitante = solicitante.porte || config.DEFAULTS.PORTE_SOLICITANTE;
 
-    // Tratamento para PF
     if (analisado.tipo === 'pessoa') {
         const ordem = config.ORDEM_PORTE;
         const sol = ordem[porteSolicitante] || 3;
@@ -318,7 +299,6 @@ function calcularRelacional(dados) {
         const diferencaPorte = Math.abs(sol - anal);
         const regras = metodologia.REGRAS.RELACIONAL.DIFERENCA;
         let relacional = regras[diferencaPorte] || 80;
-        // Aplicar fatores de relacionamento
         relacional = aplicarFatoresRelacionais(relacional, relacionamento);
         return { 
             pontuacao: Math.round(relacional), 
@@ -327,7 +307,6 @@ function calcularRelacional(dados) {
         };
     }
 
-    // Fallback para porte do analisado
     if (!porteAnalisado || porteAnalisado === 'N/A' || porteAnalisado === '') {
         if (analisado.faturamento_anual && analisado.faturamento_anual > 0) {
             const faturamento = analisado.faturamento_anual;
@@ -353,7 +332,6 @@ function calcularRelacional(dados) {
         relacional = Math.min(100, relacional * 1.2);
     }
 
-    // Aplicar fatores de relacionamento
     relacional = aplicarFatoresRelacionais(relacional, relacionamento);
 
     return { 
@@ -384,10 +362,6 @@ function getNivelRisco(contrib) {
     if (contrib >= niveis.MEDIO) return 'MEDIO';
     return 'BAIXO';
 }
-
-// ============================================================
-// FUNÇÕES AUXILIARES ADICIONADAS DA VERSÃO ATUAL
-// ============================================================
 
 function getNivelImpacto(dias) {
     if (dias <= 1) return { nivel: 'Muito Baixo', cor: '🟢', classe: 'muito-baixo' };
@@ -451,14 +425,15 @@ function calcularDiasComprometimento(valor, tipo, renda, faturamentoAnual, porte
 
 function calcularRiscos(dados) {
     // ============================================================
-// CORREÇÃO: garantir que dados.negocio seja string
-// ============================================================
-if (dados.negocio === undefined || dados.negocio === null) {
-    dados.negocio = '';
-}
-if (typeof dados.negocio !== 'string') {
-    dados.negocio = String(dados.negocio);
-}
+    // CORREÇÃO: garantir que dados.negocio seja string
+    // ============================================================
+    if (dados.negocio === undefined || dados.negocio === null) {
+        dados.negocio = '';
+    }
+    if (typeof dados.negocio !== 'string') {
+        dados.negocio = String(dados.negocio);
+    }
+
     const situacaoRaw = (dados.analisado && dados.analisado.situacao) ? dados.analisado.situacao.toUpperCase() : 'ATIVA';
 
     const palavrasCriticas = [
@@ -536,20 +511,18 @@ if (typeof dados.negocio !== 'string') {
     const relacionalResult = calcularRelacional(dados);
 
     // ============================================================
-    // CORREÇÃO: PERCENTUAL DE COMPROMETIMENTO com faturamento REAL
+    // PERCENTUAL DE COMPROMETIMENTO com faturamento REAL
     // ============================================================
     var percentualComprometimento = 0;
     var valorNegocio = dados.negocio.valor || 0;
     var parcelas = dados.negocio.parcelas || 1;
     var valorParcela = (parcelas > 0) ? valorNegocio / parcelas : valorNegocio;
 
-    // Para VENDA, usa o faturamento REAL do analisado
     var negocioStr = dados.negocio || '';
     var isVenda = negocioStr.startsWith('vender');
     
     var ticketUsado = financeiroResult.ticket_estimado || 0;
     
-    // Se for venda e tiver faturamento_anual real, recalcula
     if (isVenda && dados.analisado && dados.analisado.faturamento_anual && dados.analisado.faturamento_anual > 0) {
         ticketUsado = dados.analisado.faturamento_anual / 12 / 30;
     }
@@ -590,7 +563,10 @@ if (typeof dados.negocio !== 'string') {
         };
     });
 
-    let recomendacao = 'SIGA';
+    // ============================================================
+    // RECOMENDAÇÃO BASEADA NO SCORE GLOBAL (NÃO EM DIAS)
+    // ============================================================
+    var recomendacao = 'SIGA';
     if (scoreGlobal > 65) {
         recomendacao = 'PARE';
     } else if (scoreGlobal >= 35 && scoreGlobal <= 65) {
@@ -611,15 +587,12 @@ if (typeof dados.negocio !== 'string') {
         }
     }
 
-    // Ordena os demais riscos por contribuição decrescente
     demaisRiscos.sort(function(a, b) {
         return b.contribuicao - a.contribuicao;
     });
 
-    // Pega os 3 maiores dos demais
     var top3 = demaisRiscos.slice(0, 3);
 
-    // Monta a lista final: FINANCEIRO + top3
     var topRiscos = [];
     if (financeiroObj) {
         topRiscos.push(financeiroObj);
@@ -628,12 +601,10 @@ if (typeof dados.negocio !== 'string') {
         topRiscos.push(top3[j]);
     }
 
-    // Se por algum motivo não houver financeiro (fallback), adiciona um genérico
     if (topRiscos.length === 0) {
         topRiscos.push({ risco: 'FINANCEIRO', contribuicao: 0, nivel: 'BAIXO' });
     }
 
-    // Garante que sempre tenha 4 itens (preenche com os próximos se necessário)
     var idx = 0;
     while (topRiscos.length < 4 && idx < riscos.length) {
         var item = riscos[idx];
@@ -649,17 +620,13 @@ if (typeof dados.negocio !== 'string') {
     const tipoAnalise = DESCRICAO_PORTAS[chaveTipo] || 'Geral';
 
     // ============================================================
-    // CÁLCULO DE DIAS DE COMPROMETIMENTO PARA RETORNO
+    // DIAS DE COMPROMETIMENTO PARA RETORNO (usado no frontend)
     // ============================================================
     var analisadoTipo = dados.analisado.tipo || 'empresa';
     var analisadoRenda = dados.analisado.renda || 0;
     var analisadoFaturamentoAnual = dados.analisado.faturamento_anual || null;
     var analisadoPorte = dados.analisado.porte || 'MEDIO';
-    var solicitanteTipo = dados.solicitante.tipo || 'empresa';
-    var solicitanteRenda = dados.solicitante.renda || 0;
-    var solicitanteFaturamentoAnual = dados.solicitante.faturamento_anual || null;
-    var solicitantePorte = dados.solicitante.porte || 'MEDIO';
-
+    
     var diasAnalisado = calcularDiasComprometimento(
         valorNegocio,
         analisadoTipo,
@@ -667,6 +634,12 @@ if (typeof dados.negocio !== 'string') {
         analisadoFaturamentoAnual,
         analisadoPorte
     );
+
+    var solicitanteTipo = dados.solicitante.tipo || 'empresa';
+    var solicitanteRenda = dados.solicitante.renda || 0;
+    var solicitanteFaturamentoAnual = dados.solicitante.faturamento_anual || null;
+    var solicitantePorte = dados.solicitante.porte || 'MEDIO';
+
     var diasSolicitante = calcularDiasComprometimento(
         valorNegocio,
         solicitanteTipo,
