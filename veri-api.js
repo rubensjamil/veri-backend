@@ -1523,9 +1523,9 @@ var dadosCadastraisCompletos = {};
         // EVIDÊNCIAS DO GEMINI
         // ============================================================
         var evidenciasGemini = [];
-        if (estruturado && estruturados.dados_estruturados) {
+        if (estruturado && estruturado.dados_estruturado) {
             secoes.forEach(function(secao) {
-                var dadosSecao = estruturado.dados_estruturados[secao];
+                var dadosSecao = estruturado.dados_estruturado[secao];
                 if (dadosSecao) {
                     Object.keys(dadosSecao).forEach(function(chave) {
                         var item = dadosSecao[chave];
