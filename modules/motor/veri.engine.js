@@ -550,7 +550,10 @@ function calcularRiscos(dados) {
 
     const totalPonderado = fatores.reduce((acc, f) => acc + (f.pontuacao * f.peso), 0);
     const scoreGlobal = Math.min(99, Math.max(1, Math.round(totalPonderado / 6.0 * 10) / 10));
-    const recuperabilidade = Math.round((100 - scoreGlobal*10) / 10;
+    // ------------------------------------------------------------
+    // CORREÇÃO: arredondar recuperabilidade para 1 casa decimal
+    // ------------------------------------------------------------
+    const recuperabilidade = Math.round((100 - scoreGlobal) * 10) / 10;
 
     const fatorDivisor = totalPonderado > 0 ? totalPonderado : 1;
     const riscos = fatores.map(f => {
@@ -683,7 +686,7 @@ module.exports = {
     calcularRiscos,
     calcularFinanceiro,
     calcularDescontinuidade,
-    calcularVeracidade
+    calcularVeracidade,
     calcularComportamental,
     calcularIntegridade,
     calcularDeterioracao,
