@@ -549,11 +549,11 @@ function calcularRiscos(dados) {
     ];
 
     const totalPonderado = fatores.reduce((acc, f) => acc + (f.pontuacao * f.peso), 0);
-    const scoreGlobal = Math.min(99, Math.max(1, Math.round(totalPonderado / 6.0 * 10) / 10));
     // ------------------------------------------------------------
-    // CORREÇÃO: arredondar recuperabilidade para 1 casa decimal
+    // CORREÇÃO: arredondar scoreGlobal e recuperabilidade para 1 casa decimal
     // ------------------------------------------------------------
-    const recuperabilidade = Math.round((100 - scoreGlobal) * 10) / 10;
+    const scoreGlobal = Number((Math.min(99, Math.max(1, Math.round(totalPonderado / 6.0 * 10) / 10))).toFixed(1));
+    const recuperabilidade = Number((100 - scoreGlobal).toFixed(1));
 
     const fatorDivisor = totalPonderado > 0 ? totalPonderado : 1;
     const riscos = fatores.map(f => {
